@@ -1,6 +1,6 @@
 --- mod-version:3
 --
--- LSP client for lite-xl
+-- LSP client for Pragtical
 -- @copyright Jefferson Gonzalez
 -- @license MIT
 --
@@ -72,7 +72,7 @@ local HelpDoc = require "plugins.lsp.helpdoc"
 ---@field snippets boolean
 ---Stop servers that aren't needed by any of the open files
 ---@field stop_unneeded_servers boolean
----Send a server stderr output to lite log
+---Send a server stderr output to pragtical log
 ---@field log_server_stderr boolean
 ---Force verbosity off even if a server is configured with verbosity on
 ---@field force_verbosity_off boolean
@@ -164,7 +164,7 @@ config.plugins.lsp = common.merge({
     },
     {
       label = "Log Standard Error",
-      description = "Send a server stderr output to lite log.",
+      description = "Send a server stderr output to pragtical log.",
       path = "log_server_stderr",
       type = "TOGGLE",
       default = false
@@ -635,10 +635,10 @@ local cached_workspace_settings = {}
 local cached_workspace_settings_timestamp = 0
 
 ---Get table of configuration settings in the following way:
----1. Scan the USERDIR for .lite_lsp.lua or .lite_lsp.json (in that order)
+---1. Scan the USERDIR for .pragtical_lsp.lua or .pragtical_lsp.json (in that order)
 ---2. Merge server.settings
----4. Scan workspace if set also for .lite_lsp.lua/json and merge them or
----3. Scan server.path also for .lite_lsp.lua/json and merge them
+---4. Scan workspace if set also for .pragtical_lsp.lua/json and merge them or
+---3. Scan server.path also for .pragtical_lsp.lua/json and merge them
 ---Note: settings are cached for 5 seconds for faster retrieval
 ---      on repetitive calls to this function.
 ---@param server lsp.server
@@ -671,13 +671,13 @@ function lsp.get_workspace_settings(server, workspace)
       if path then
         local settings_new = nil
         path = path:gsub("\\+$", ""):gsub("/+$", "")
-        if util.file_exists(path .. "/.lite_lsp.lua") then
-          local settings_lua = dofile(path .. "/.lite_lsp.lua")
+        if util.file_exists(path .. "/.pragtical_lsp.lua") then
+          local settings_lua = dofile(path .. "/.pragtical_lsp.lua")
           if type(settings_lua) == "table" then
             settings_new = settings_lua
           end
-        elseif util.file_exists(path .. "/.lite_lsp.json") then
-          local file = io.open(path .. "/.lite_lsp.json", "r")
+        elseif util.file_exists(path .. "/.pragtical_lsp.json") then
+          local file = io.open(path .. "/.pragtical_lsp.json", "r")
           if file then
             local settings_json = file:read("*a")
             settings_new = json.decode(settings_json)
@@ -741,7 +741,7 @@ function lsp.start_server(filename, project_directory)
 
         lsp.servers_running[name] = client
 
-        -- We overwrite the default log function to log messages on lite
+        -- We overwrite the default log function to log messages on pragtical
         function client:log(message, ...)
           core.log_quiet(
             "[LSP/%s]: " .. message .. "\n",
@@ -842,7 +842,7 @@ function lsp.start_server(filename, project_directory)
           end
         )
 
-        -- Display server messages on lite UI
+        -- Display server messages on pragtical UI
         client:add_message_listener(
           "window/logMessage",
           function(server, params)
@@ -929,7 +929,7 @@ function lsp.start_server(filename, project_directory)
         end)
 
         -- Start the server initialization process
-        client:initialize(project_directory, "Lite XL", VERSION)
+        client:initialize(project_directory, "Pragtical", VERSION)
       end
     end
   end
@@ -969,8 +969,8 @@ end
 ---@param doc core.doc
 function lsp.open_document(doc)
   -- in some rare ocassions this function may return nil when the
-  -- user closed lite-xl with files opened, removed the files from system
-  -- and opens lite-xl again which loads the non existent files.
+  -- user closed pragtical with files opened, removed the files from system
+  -- and opens pragtical again which loads the non existent files.
   local doc_path = core.project_absolute_path(doc.filename)
   local file_info = system.get_file_info(doc_path)
   if not file_info then

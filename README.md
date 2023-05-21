@@ -1,22 +1,18 @@
-# LSP Plugin for Lite XL editor
+# LSP Plugin for Pragtical editor
 
-Plugin that provides intellisense for Lite XL by leveraging the [LSP protocol]
+Plugin that provides intellisense for Pragtical by leveraging the [LSP protocol]
 While still a work in progress it already implements all the most important
-features to make your life easier while coding with Lite XL. Using it
-requires __Lite XL v2.1+__  (for __Lite XL v2.0.1__ to __Lite XL v2.0.5__
-check out the __0.1__ branch). [lint+] is optionally used to render
-diagnostic messages while you type so make sure to get it. Also, the
-[snippets] plugin is used to properly process the received autocompletions
-in the form of snippets, so grab that too.
+features to make your life easier while coding with Pragtical. [lint+] is
+optionally used to render diagnostic messages while you type so make sure to
+get it. Also, the [snippets] plugin is used to properly process the received
+autocompletions in the form of snippets, so grab that too.
 
 To use, clone this project into the __lsp__ directory in your plugins
-folder. Finally you will need the [Widgets] lib so make sure to also drop
-it into your lite-xl configs directory. For example:
+folder. For example:
 
 ```sh
-cd ~/.config/lite-xl/
-git clone https://github.com/lite-xl/lite-xl-lsp plugins/lsp
-git clone https://github.com/lite-xl/lite-xl-widgets libraries/widget
+cd ~/.config/pragtical/
+git clone https://github.com/pragtical/lsp plugins/lsp
 git clone https://github.com/liquidev/lintplus plugins/lintplus
 wget https://raw.githubusercontent.com/vqns/lite-xl-snippets/main/snippets.lua \
   -O plugins/snippets.lua
@@ -24,13 +20,12 @@ wget https://raw.githubusercontent.com/vqns/lite-xl-snippets/main/lsp_snippets.l
   -O plugins/lsp_snippets.lua
 ```
 
-The lite-xl configs directory should have:
+The pragtical configs directory should have:
 
-* ~/.config/lite-xl/libraries/widget/
-* ~/.config/lite-xl/plugins/lsp/
-* ~/.config/lite-xl/plugins/lintplus/
-* ~/.config/lite-xl/plugins/snippets.lua
-* ~/.config/lite-xl/plugins/lsp_snippets.lua
+* ~/.config/pragtical/plugins/lsp/
+* ~/.config/pragtical/plugins/lintplus/
+* ~/.config/pragtical/plugins/snippets.lua
+* ~/.config/pragtical/plugins/lsp_snippets.lua
 
 ## Features
 
@@ -181,7 +176,7 @@ config.plugins.lsp.log_file = ""
 ---@type boolean
 config.plugins.lsp.prettify_json = false
 
----Send a server stderr output to lite log
+---Send a server stderr output to pragtical log
 ---@type boolean
 config.plugins.lsp.log_server_stderr = false
 
@@ -260,6 +255,5 @@ Some images to easily visualize the progress :)
 
 [LSP protocol]: https://microsoft.github.io/language-server-protocol/specifications/specification-current/
 [lint+]:        https://github.com/liquidev/lintplus
-[snippets]:     https://github.com/vqns/lite-xl-snippets
-[Widgets]:      https://github.com/lite-xl/lite-xl-widgets
+[snippets]:     https://github.com/vqns/pragtical-snippets
 [config.lua]:   config.lua
