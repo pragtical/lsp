@@ -146,6 +146,20 @@ lspconfig.clojure_lsp = add_lsp {
   verbose = false
 }
 
+---# cmake-language-server
+--- __Status__: Works
+--- __Site__: https://github.com/regen100/cmake-language-server
+--- __Installation__: `pip install cmake-language-server`
+---                   or `yay -S cmake-language-server`
+lspconfig.cmakels = add_lsp {
+  name = "cmake-language-server",
+  language = "cmake",
+  file_patterns = { "%.cmake$", "CMakeLists.txt$" },
+  command = { "cmake-language-server" },
+  init_options = { buildDirectory = 'build' },
+  verbose = false
+}
+
 ---# vscode-css-languageserver
 --- __Status__: Works
 --- __Site__: https://github.com/vscode-langservers/vscode-css-languageserver-bin
