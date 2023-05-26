@@ -255,5 +255,5 @@ Some images to easily visualize the progress :)
 
 [LSP protocol]: https://microsoft.github.io/language-server-protocol/specifications/specification-current/
 [lint+]:        https://github.com/liquidev/lintplus
-[snippets]:     https://github.com/vqns/pragtical-snippets
+[snippets]:     https://github.com/vqns/lite-xl-snippets
 [config.lua]:   config.lua
