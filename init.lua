@@ -1,4 +1,4 @@
---- mod-version:3
+--- mod-version:3.1
 --
 -- LSP client for Pragtical
 -- @copyright Jefferson Gonzalez
@@ -2030,7 +2030,7 @@ end
 -- Thread to process server requests and responses
 -- without blocking entirely the editor.
 --
-core.add_thread(function()
+core.add_background_thread(function()
   while true do
     local servers_running = false
     for _,server in pairs(lsp.servers_running) do
@@ -2099,7 +2099,7 @@ function Doc:load(...)
   -- skip new files
   if self.filename and config.plugins.lsp.autostart_server then
     diagnostics.lintplus_init_doc(self)
-    core.add_thread(function()
+    core.add_background_thread(function()
       lsp.start_server(self.filename, core.project_dir)
       lsp.open_document(self)
     end)
@@ -2113,11 +2113,11 @@ function Doc:save(...)
   if old_filename ~= self.filename then
     -- seems to be a new document so we send open notification
     diagnostics.lintplus_init_doc(self)
-    core.add_thread(function()
+    core.add_background_thread(function()
       lsp.open_document(self)
     end)
   else
-    core.add_thread(function()
+    core.add_background_thread(function()
       lsp.update_document(self)
       lsp.save_document(self)
     end)
@@ -2130,7 +2130,7 @@ function Doc:on_close()
 
   -- skip new files
   if not self.filename then return end
-  core.add_thread(function()
+  core.add_background_thread(function()
     lsp.close_document(self)
   end)
 
@@ -2567,4 +2567,3 @@ end
 
 
 return lsp
-
