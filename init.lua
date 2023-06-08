@@ -982,7 +982,7 @@ end
 function lsp.start_servers()
   for _, doc in ipairs(core.docs) do
     if doc.filename then
-      lsp.start_server(doc.filename, core.project_dir)
+      lsp.start_server(doc.filename, core.root_project().path)
     end
   end
 end
@@ -2126,7 +2126,7 @@ function Doc:load(...)
   if self.filename and config.plugins.lsp.autostart_server then
     diagnostics.lintplus_init_doc(self)
     core.add_background_thread(function()
-      lsp.start_server(self.filename, core.project_dir)
+      lsp.start_server(self.filename, core.root_project().path)
       lsp.open_document(self)
     end)
   end
