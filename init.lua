@@ -2075,7 +2075,11 @@ core.add_background_thread(function()
 
     if servers_running then
       local wait = 0.01
-      if config.plugins.lsp.more_yielding then wait = 0 end
+      if not system.window_has_focus() then
+        wait = 1
+      elseif config.plugins.lsp.more_yielding then
+        wait = 0
+      end
       coroutine.yield(wait)
     else
       coroutine.yield(2)
