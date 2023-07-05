@@ -386,6 +386,8 @@ local function apply_edit(server, doc, text_edit, is_snippet)
     range = text_edit.replace
   end
 
+  if not range then return false end
+
   local text = text_edit.newText
   local line1, col1, line2, col2
   local current_text = ""
