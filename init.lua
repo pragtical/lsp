@@ -220,6 +220,16 @@ lsp.user_typed = false
 ---@field triggered boolean
 lsp.hover_position = {doc = nil, line = 0, col = 0, triggered = false}
 
+---@type lsp.timer
+lsp.hover_timer = Timer(300, true)
+
+lsp.hover_timer.on_timer = function()
+  lsp.request_hover(
+    lsp.hover_position.doc,
+    lsp.hover_position.line,
+    lsp.hover_position.col
+  )
+end
 --
 -- Private functions
 --
@@ -1071,16 +1081,6 @@ function lsp.open_document(doc)
         end
       else
         doc.lsp_open = true
-      end
-
-      ---@type lsp.timer
-      doc.lsp_hover_timer = Timer(300, true)
-      doc.lsp_hover_timer.on_timer = function()
-        lsp.request_hover(
-          lsp.hover_position.doc,
-          lsp.hover_position.line,
-          lsp.hover_position.col
-        )
       end
     end
   end
@@ -2273,6 +2273,8 @@ function RootView:on_mouse_moved(x, y, dx, dy)
       and
       x >= lx1 and x <= lx2
     then
+      lsp.hover_timer:reset()
+
       if
         lsp.hover_position.doc ~= doc
         or
@@ -2287,19 +2289,20 @@ function RootView:on_mouse_moved(x, y, dx, dy)
         lsp.hover_position.line = line1
         lsp.hover_position.col = col1
 
-        doc.lsp_hover_timer:set_interval(config.plugins.lsp.mouse_hover_delay)
-        doc.lsp_hover_timer:reset()
-
-        if not doc.lsp_hover_timer:running() then
-          doc.lsp_hover_timer:start()
+        if not lsp.hover_timer:running() then
+          lsp.hover_timer:set_interval(config.plugins.lsp.mouse_hover_delay)
+          lsp.hover_timer:start()
         end
       end
     else
       if lsp.hover_position.triggered then
         listbox.hide()
         lsp.hover_position.triggered = false
+        lsp.hover_position.doc = nil
+        lsp.hover_position.line = 0
+        lsp.hover_position.col = 0
       end
-      doc.lsp_hover_timer:stop()
+      lsp.hover_timer:stop()
     end
   end
 end
