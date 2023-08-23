@@ -1149,6 +1149,8 @@ function lsp.close_document(doc)
 
   local active_servers = lsp.get_active_servers(doc.filename, true)
   if #active_servers > 0 then
+    -- mark as lsp closed since GC can take some time to kick-in
+    doc.lsp_open = false
     for _, name in pairs(active_servers) do
       local server = lsp.servers_running[name]
       if
@@ -2157,7 +2159,9 @@ function Doc:on_close()
   -- skip new files
   if not self.filename then return end
   core.add_background_thread(function()
-    lsp.close_document(self)
+    if #core.get_views_referencing_doc(self) == 0 then
+      lsp.close_document(self)
+    end
   end)
 
   if not config.plugins.lsp.stop_unneeded_servers then
