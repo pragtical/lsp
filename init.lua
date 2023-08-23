@@ -990,11 +990,11 @@ end
 ---Send notification to applicable LSP servers that a document was opened
 ---@param doc core.doc
 function lsp.open_document(doc)
-  -- in some rare ocassions this function may return nil when the
+  -- in some rare ocassions this may be set to nil when the
   -- user closed pragtical with files opened, removed the files from system
   -- and opens pragtical again which loads the non existent files.
-  local doc_path = core.project_absolute_path(doc.filename)
-  local file_info = system.get_file_info(doc_path)
+  local doc_path = doc.abs_filename
+  local file_info = doc_path and system.get_file_info(doc_path) or false
   if not file_info then
     core.error("[LSP] could not open: %s", tostring(doc.filename))
     return
