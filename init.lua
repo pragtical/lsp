@@ -25,6 +25,7 @@ local Doc = require "core.doc"
 local DocView = require "core.docview"
 local StatusView = require "core.statusview"
 local RootView = require "core.rootview"
+local contextmenu
 local LineWrapping
 -- If the lsp plugin is loaded from users init.lua it will load linewrapping
 -- even if it was disabled from the settings ui, so we queue this check since
@@ -2280,11 +2281,17 @@ function RootView:on_mouse_moved(x, y, dx, dy)
       lsp.hover_timer:reset()
 
       if
-        lsp.hover_position.doc ~= doc
-        or
-        lsp.hover_position.line ~= line1
-        or
-        lsp.hover_position.col ~= col1
+        (
+          lsp.hover_position.doc ~= doc
+          or
+          lsp.hover_position.line ~= line1
+          or
+          lsp.hover_position.col ~= col1
+        )
+        and
+        (
+          not contextmenu or not contextmenu.show_context_menu
+        )
       then
         listbox.hide()
 
@@ -2553,55 +2560,68 @@ keymap.add {
 --
 -- Register context menu items
 --
-local function lsp_predicate(_, _, also_in_symbol)
-  local dv = get_active_docview()
-  if dv then
-    local doc = dv.doc
+core.add_thread(function()
+  if config.plugins.cotextmenu or type(config.plugins.cotextmenu) == "nil" then
+    contextmenu = require "plugins.contextmenu"
 
-    if #lsp.get_active_servers(doc.filename, true) < 1 then
+    local function lsp_predicate(_, _, also_in_symbol)
+      local dv = get_active_docview()
+      if dv then
+        local doc = dv.doc
+
+        if #lsp.get_active_servers(doc.filename, true) < 1 then
+          return false
+        elseif not also_in_symbol then
+          return true
+        end
+
+        -- Make sure the cursor is place near a document symbol (word)
+        local linem, colm = doc:get_selection()
+        local linel, coll = doc:position_offset(linem, colm, translate.start_of_word)
+        local liner, colr = doc:position_offset(linem, colm, translate.end_of_word)
+
+        local word_left = doc:get_text(linel, coll, linem, colm)
+        local word_right = doc:get_text(linem, colm, liner, colr)
+
+        if #word_left > 0 or #word_right > 0 then
+          return true
+        end
+      end
       return false
-    elseif not also_in_symbol then
-      return true
     end
 
-    -- Make sure the cursor is place near a document symbol (word)
-    local linem, colm = doc:get_selection()
-    local linel, coll = doc:position_offset(linem, colm, translate.start_of_word)
-    local liner, colr = doc:position_offset(linem, colm, translate.end_of_word)
+    local function lsp_predicate_symbols()
+      return lsp_predicate(nil, nil, true)
+    end
 
-    local word_left = doc:get_text(linel, coll, linem, colm)
-    local word_right = doc:get_text(linem, colm, liner, colr)
+    contextmenu:register(lsp_predicate_symbols, {
+      contextmenu.DIVIDER,
+      { text = "Show Symbol Info",        command = "lsp:show-symbol-info" },
+      { text = "Show Symbol Info in Tab", command = "lsp:show-symbol-info-in-tab" },
+      { text = "Goto Definition",         command = "lsp:goto-definition" },
+      { text = "Goto Implementation",     command = "lsp:goto-implementation" },
+      { text = "Find References",         command = "lsp:find-references" }
+    })
 
-    if #word_left > 0 or #word_right > 0 then
-      return true
+    contextmenu:register(lsp_predicate, {
+      contextmenu.DIVIDER,
+      { text = "Document Symbols",       command = "lsp:view-document-symbols" },
+      { text = "Document Diagnostics",   command = "lsp:view-document-diagnostics" },
+      { text = "Toggle Diagnostics",     command = "lsp:toggle-diagnostics" },
+      { text = "Format Document",        command = "lsp:format-document" },
+    })
+
+    local contextmenu_show = contextmenu.show
+    function contextmenu:show(...)
+      if lsp.hover_position.triggered then
+        lsp.hover_timer:stop()
+        listbox.hide()
+        lsp.hover_position.triggered = false
+        lsp.hover_position.doc = nil
+      end
+      contextmenu_show(self, ...)
     end
   end
-  return false
-end
-
-local function lsp_predicate_symbols()
-  return lsp_predicate(nil, nil, true)
-end
-
-local menu_found, menu = pcall(require, "plugins.contextmenu")
-if menu_found then
-  menu:register(lsp_predicate_symbols, {
-    menu.DIVIDER,
-    { text = "Show Symbol Info",        command = "lsp:show-symbol-info" },
-    { text = "Show Symbol Info in Tab", command = "lsp:show-symbol-info-in-tab" },
-    { text = "Goto Definition",         command = "lsp:goto-definition" },
-    { text = "Goto Implementation",     command = "lsp:goto-implementation" },
-    { text = "Find References",         command = "lsp:find-references" }
-  })
-
-  menu:register(lsp_predicate, {
-    menu.DIVIDER,
-    { text = "Document Symbols",       command = "lsp:view-document-symbols" },
-    { text = "Document Diagnostics",   command = "lsp:view-document-diagnostics" },
-    { text = "Toggle Diagnostics",     command = "lsp:toggle-diagnostics" },
-    { text = "Format Document",        command = "lsp:format-document" },
-  })
-end
-
+end)
 
 return lsp
