@@ -1507,7 +1507,7 @@ end
 ---Kills the server process and deinitialize the server object state.
 function Server:stop()
   self.initialized = false
-  self.proc = nil
+  self.proc:kill()
 
   self.request_list = {}
   self.response_list = {}
