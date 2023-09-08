@@ -73,6 +73,8 @@ local HelpDoc = require "plugins.lsp.helpdoc"
 ---@field snippets boolean
 ---Stop servers that aren't needed by any of the open files
 ---@field stop_unneeded_servers boolean
+---The amount of seconds to keep the server active before stopping it
+---@field server_quit_timeout number
 ---Send a server stderr output to pragtical log
 ---@field log_server_stderr boolean
 ---Force verbosity off even if a server is configured with verbosity on
@@ -87,6 +89,7 @@ config.plugins.lsp = common.merge({
   diagnostics_delay = 500,
   snippets = true,
   stop_unneeded_servers = true,
+  server_quit_timeout = 60,
   log_file = "",
   prettify_json = false,
   log_server_stderr = false,
@@ -148,6 +151,15 @@ config.plugins.lsp = common.merge({
       path = "stop_unneeded_servers",
       type = "TOGGLE",
       default = true
+    },
+    {
+      label = "Stop Servers Timeout",
+      description = "Amount of seconds to keep a server active before stopping it.",
+      path = "server_quit_timeout",
+      type = "NUMBER",
+      default = 60,
+      min = 0,
+      max = 300
     },
     {
       label = "Log File",
@@ -609,6 +621,10 @@ function lsp.add_server(options)
   if #options.command <= 0 then
     core.error("[LSP] Provide a command table list with the lsp command.")
     return false
+  end
+
+  if not options.quit_timeout then
+    options.quit_timeout = config.plugins.lsp.server_quit_timeout or 60
   end
 
   -- some lsp servers may be installed with different binary names
