@@ -393,6 +393,18 @@ lspconfig.kotlin_language_server = add_lsp {
   verbose = false
 }
 
+---# Swift-MesonLSP
+--- __Status__: Works
+--- __Site__: https://github.com/JCWasmx86/Swift-MesonLSP
+--- __Installation__: `yay -S swift-mesonlsp`
+lspconfig.swift_mesonlsp = add_lsp {
+  name = "Swift-MesonLSP",
+  language = "meson",
+  file_patterns = { "meson.build", "meson_options.txt" },
+  command = { 'Swift-MesonLSP', '--lsp' },
+  verbose = false
+}
+
 ---# nil
 --- __Status__:       Works
 --- __Site__:         https://github.com/oxalica/nil
