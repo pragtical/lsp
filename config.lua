@@ -10,6 +10,7 @@
 --
 
 local lsp = require "plugins.lsp"
+local core = require "core"
 local config = require "core.config"
 local snippets = pcall(require, "plugins.snippets") and config.plugins.lsp.snippets
 
@@ -358,6 +359,21 @@ lspconfig.intelephense = add_lsp {
   language = "php",
   file_patterns = { "%.php$" },
   command = { "intelephense", "--stdio" },
+  verbose = false
+}
+
+---# psalm-language-server
+--- __Status__: Works but has issues
+--- __Site__: https://github.com/vimeo/psalm
+--- __Installation__: https://github.com/vimeo/psalm/blob/5.x/docs/running_psalm/installation.md
+lspconfig.psalmls = add_lsp {
+  name = "psalm-language-server",
+  language = "php",
+  file_patterns = { "%.php$" },
+  command = {
+    core.root_project():absolute_path("vendor/bin/psalm-language-server"),
+    '--config', core.root_project():absolute_path("psalm.xml"),
+  },
   verbose = false
 }
 
