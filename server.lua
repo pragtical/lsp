@@ -9,6 +9,7 @@
 -- LSP Documentation:
 -- https://microsoft.github.io/language-server-protocol/specifications/specification-3-17
 
+local core = require "core"
 local json = require "plugins.lsp.json"
 local util = require "plugins.lsp.util"
 local Object = require "core.object"
@@ -273,7 +274,9 @@ function Server:new(options)
 
   self.proc = process.start(
     options.command, {
-      stderr = process.REDIRECT_PIPE
+      stderr = process.REDIRECT_PIPE,
+      -- needed on some not fully implemented lsp servers like psalm
+      cwd = core.root_project().path
     }
   )
   self.quit_timeout = options.quit_timeout or 60
@@ -1201,8 +1204,8 @@ function Server:read_responses(timeout)
       end
     end
 
-    if output:find('^Content%-Length: %d+\r\n') then
-      bytes = tonumber(output:match("%d+"))
+    if output:find('Content%-Length: %d+\r\n') then
+      bytes = tonumber(output:match("Content%-Length: (%d+)"))
 
       local header_content = util.split(output, "\r\n\r\n")
 
