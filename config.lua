@@ -158,7 +158,7 @@ lspconfig.clojure_lsp = add_lsp {
 lspconfig.cmakels = add_lsp {
   name = "cmake-language-server",
   language = "cmake",
-  file_patterns = { "%.cmake$", "CMakeLists.txt$" },
+  file_patterns = { "%.cmake$", "CMakeLists%.txt$" },
   command = { "cmake-language-server" },
   init_options = { buildDirectory = 'build' },
   verbose = false
@@ -369,7 +369,7 @@ lspconfig.intelephense = add_lsp {
 lspconfig.jsonls = add_lsp {
   name = "json-languageserver",
   language = "json",
-  file_patterns = { "%.json$", "%.jsonc$" },
+  file_patterns = { "%.c?json$" },
   command = {
     {
       'vscode-json-languageserver',
@@ -400,7 +400,7 @@ lspconfig.kotlin_language_server = add_lsp {
 lspconfig.swift_mesonlsp = add_lsp {
   name = "Swift-MesonLSP",
   language = "meson",
-  file_patterns = { "meson.build", "meson_options.txt" },
+  file_patterns = { "meson%.build$", "meson%.options$", "meson_options%.txt$" },
   command = { 'Swift-MesonLSP', '--lsp' },
   verbose = false
 }
