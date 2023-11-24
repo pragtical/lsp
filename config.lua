@@ -694,6 +694,18 @@ lspconfig.tsserver = add_lsp {
   verbose = false
 }
 
+---# vlang-analyzer
+--- __Status__: Works
+--- __Site__: https://github.com/v-analyzer/v-analyzer
+--- __Installation__: See official website for instructions
+lspconfig.v_analyzer = add_lsp {
+  name = "v-analyzer",
+  language = "v",
+  file_patterns = { "%.v$" },
+  command = { 'v-analyzer' },
+  verbose = false
+}
+
 ---# vim-language-server
 --- __Status__: Untested
 --- __Site__: https://github.com/iamcco/vim-language-server
