@@ -2294,7 +2294,7 @@ function RootView:on_mouse_moved(x, y, dx, dy)
     local line1, col1 = translate.start_of_word(doc, line, col)
     local line2, col2 = translate.end_of_word(doc, line1, col1)
     local text = doc:get_text(line1, col1, line2, col2):gsub("%s*", "")
-    local lx1 = av:get_line_screen_position(line1, col1)
+    local lx1, ly = av:get_line_screen_position(line1, col1)
     local lx2 = av:get_line_screen_position(line1, col2)
     if
       col >= col1 and col <= col2
@@ -2302,6 +2302,8 @@ function RootView:on_mouse_moved(x, y, dx, dy)
       text ~= ""
       and
       x >= lx1 and x <= lx2
+      and
+      y >= ly and y <= (ly + av:get_line_height())
     then
       lsp.hover_timer:reset()
 
