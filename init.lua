@@ -1,4 +1,4 @@
---- mod-version:3.1
+--- mod-version:3.3.1
 --
 -- LSP client for Pragtical
 -- @copyright Jefferson Gonzalez

@@ -5,7 +5,7 @@
       "name": "Language Server Protocol",
       "description": "Provides intellisense by leveraging the LSP protocol.",
       "version": "0.7",
-      "mod_version": "3.1",
+      "mod_version": "3.3.1",
       "dependencies": {
         "lintplus": { "version": ">=0.2" },
         "snippets": { },
