@@ -4,6 +4,7 @@
 -- @license MIT
 --
 
+local core = require "core"
 local style = require "core.style"
 local Widget = require "widget"
 local Label = require "widget.label"
@@ -13,13 +14,14 @@ local Server = require "plugins.lsp.server"
 
 local Lsp = {}
 
----@class lsp.symbolresults : widget
+---@class lsp.ui.symbolresults : widget
 ---@field public searching boolean
 ---@field public symbol string
 ---@field private title widget.label
 ---@field private line widget.line
 ---@field private list_container widget
 ---@field private list widget.listbox
+---@overload fun():lsp.ui.symbolresults
 local SymbolResults = Widget:extend()
 
 function SymbolResults:new(symbol)
@@ -118,4 +120,3 @@ end
 
 
 return SymbolResults
-
