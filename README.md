@@ -34,6 +34,7 @@ Stuff that is currently implemented:
 * Code auto completion (**ctrl+space**)
 * Function signatures tooltip (**ctrl+shift+space**)
 * Current cursor symbol details tooltip on mouse hover or shortcut (**alt+a**)
+* Symbol renaming (**alt+r**)
 * Goto definition (**alt+d**)
 * Goto implementation (**alt+shift+d**)
 * View/jump to current document symbols (**alt+s**)
@@ -197,7 +198,7 @@ config.plugins.lsp.more_yielding = false
   $/progress, telemetry/event
 - [x] Be able to search workspace symbols 'workspace/symbol'
 - [ ] Completion preselectSupport (needs autocomplete plugin change)
-- [ ] Add symbol renaming support 'textDocument/rename'
+- [x] Add symbol renaming support 'textDocument/rename'
 - [x] Add Snippets support (this will need a whole standalone [snippets] plugin).
 - [x] Fix issues when parsing stdout from some lsp servers (really fixed?).
 - [x] More improvements to autocomplete.lua plugin

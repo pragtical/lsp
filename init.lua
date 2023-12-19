@@ -42,7 +42,8 @@ local listbox = require "plugins.lsp.listbox"
 local diagnostics = require "plugins.lsp.diagnostics"
 local Server = require "plugins.lsp.server"
 local Timer = require "plugins.lsp.timer"
-local SymbolResults = require "plugins.lsp.symbolresults"
+local RenameSymbol = require "plugins.lsp.ui.renamesymbol"
+local SymbolResults = require "plugins.lsp.ui.symbolresults"
 local MessageBox = require "widget.messagebox"
 local snippets_found, snippets = pcall(require, "plugins.snippets")
 
@@ -1745,13 +1746,11 @@ function lsp.request_symbol_rename(doc, line, col, new_name)
         params = request_params,
         callback = function(server, response)
           if response.result and #response.result.changes then
-            for file_uri, changes in pairs(response.result.changes) do
-              core.log(file_uri .. " " .. #changes)
-              -- TODO: Finish implement textDocument/rename
-            end
+            local rename_symbol = RenameSymbol(response.result)
+            core.root_view:get_active_node_default():add_view(rename_symbol)
+          else
+            MessageBox.error("Symbol Renaming", "Could not process the request")
           end
-
-          core.log("%s", json.prettify(json.encode(response)))
         end
       })
       return
@@ -1774,8 +1773,6 @@ function lsp.request_workspace_symbol(doc, symbol)
   for _, name in pairs(lsp.get_active_servers(doc.filename, true)) do
     local server = lsp.servers_running[name]
     if server.capabilities.workspaceSymbolProvider then
-      local rs = SymbolResults(symbol)
-      core.root_view:get_active_node_default():add_view(rs)
       server:push_request('workspace/symbol', {
         params = {
           query = symbol,
@@ -1786,16 +1783,22 @@ function lsp.request_workspace_symbol(doc, symbol)
         },
         callback = function(server, response)
           if response.result and #response.result > 0 then
+            local rs = SymbolResults(symbol)
+            core.root_view:get_active_node_default():add_view(rs)
             for index, result in ipairs(response.result) do
               rs:add_result(result)
               if index % 100 == 0 then
-                coroutine.yield()
+                core.redraw = true
                 rs.list:resize_to_parent()
+                coroutine.yield()
               end
             end
+            core.redraw = true
             rs.list:resize_to_parent()
+            rs:stop_searching()
+          else
+            core.warn("No matching workspace symbols were found.")
           end
-          rs:stop_searching()
         end
       })
       break
@@ -2499,11 +2502,23 @@ command.add(
   end,
 
   ["lsp:rename-symbol"] = function(doc)
+    ---@type core.view[]
+    local views = core.root_view.root_node:get_children()
+    for _, view in ipairs(views) do
+      if view:is(RenameSymbol) then
+        MessageBox.warning(
+          "Symbol Rename in Progress",
+          "Please finish and close currently opened symbol rename procedure."
+        )
+        return
+      end
+    end
     local symbol = doc:get_text(doc:get_selection())
     local line1, col1, line2 = doc:get_selection()
     if #symbol > 0 and line1 == line2 then
       core.command_view:enter("New Symbol Name", {
         text = symbol,
+        select_text = true,
         submit = function(new_name)
           lsp.request_symbol_rename(doc, line1, col1, new_name)
         end
@@ -2624,7 +2639,8 @@ core.add_thread(function()
       { text = "Show Symbol Info in Tab", command = "lsp:show-symbol-info-in-tab" },
       { text = "Goto Definition",         command = "lsp:goto-definition" },
       { text = "Goto Implementation",     command = "lsp:goto-implementation" },
-      { text = "Find References",         command = "lsp:find-references" }
+      { text = "Find References",         command = "lsp:find-references" },
+      { text = "Rename",                  command = "lsp:rename-symbol" },
     })
 
     contextmenu:register(lsp_predicate, {
