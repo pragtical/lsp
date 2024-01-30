@@ -1881,6 +1881,11 @@ function lsp.request_document_format(doc)
     servers_found = true
     local server = lsp.servers_running[name]
     if server.capabilities.documentFormattingProvider then
+      local trim_lines, trim_final = true, true
+      if config.plugins.trimwhitespace then
+        trim_lines = config.plugins.trimwhitespace.enabled
+        trim_final = config.plugins.trimwhitespace.trim_empty_end_lines
+      end
       server:push_request('textDocument/formatting', {
         params = {
           textDocument = {
@@ -1889,9 +1894,9 @@ function lsp.request_document_format(doc)
           options = {
             tabSize = config.indent_size,
             insertSpaces = config.tab_type == "soft",
-            trimTrailingWhitespace = config.plugins.trimwhitespace or true,
-            insertFinalNewline = false,
-            trimFinalNewlines = true
+            trimTrailingWhitespace = trim_lines,
+            trimFinalNewlines = trim_final,
+            insertFinalNewline = false
           }
         },
         callback = function(server, response)
