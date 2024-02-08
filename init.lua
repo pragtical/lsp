@@ -5,8 +5,8 @@
 -- @license MIT
 --
 -- Note: Annotations syntax documentation which is supported by
--- https://github.com/sumneko/lua-language-server can be read here:
--- https://emmylua.github.io/annotation.html
+-- https://github.com/LuaLS/lua-language-server can be read here:
+-- https://github.com/LuaLS/lua-language-server/wiki/Annotations
 
 -- TODO Change the code to make it possible to use more than one LSP server
 -- for a single file if possible and needed, for eg:
@@ -39,16 +39,23 @@ end)
 local json = require "plugins.lsp.json"
 local util = require "plugins.lsp.util"
 local listbox = require "plugins.lsp.listbox"
+local protocol = require "plugins.lsp.protocol"
 local diagnostics = require "plugins.lsp.diagnostics"
 local Server = require "plugins.lsp.server"
 local Timer = require "plugins.lsp.timer"
 local RenameSymbol = require "plugins.lsp.ui.renamesymbol"
 local SymbolResults = require "plugins.lsp.ui.symbolresults"
+local SymbolsTree = require "plugins.lsp.ui.symbolstree"
 local MessageBox = require "widget.messagebox"
 local snippets_found, snippets = pcall(require, "plugins.snippets")
 
 ---@type lsp.helpdoc
 local HelpDoc = require "plugins.lsp.helpdoc"
+
+--
+-- Main plugin functionality
+--
+local lsp = {}
 
 --
 -- Plugin settings
@@ -83,6 +90,8 @@ local HelpDoc = require "plugins.lsp.helpdoc"
 ---Yield when reading from LSP which may give you better UI responsiveness
 ---when receiving large responses, but will affect LSP performance.
 ---@field more_yielding boolean
+---Determines the default visibility of the symbols tree.
+---@field symbolstree_visibility "show" | "hide" | "auto"
 config.plugins.lsp = common.merge({
   mouse_hover = true,
   mouse_hover_delay = 300,
@@ -97,6 +106,7 @@ config.plugins.lsp = common.merge({
   force_verbosity_off = false,
   more_yielding = false,
   autostart_server = true,
+  symbolstree_visibility = "auto",
   -- The config specification used by the settings gui
   config_spec = {
     name = "Language Server Protocol",
@@ -196,15 +206,33 @@ config.plugins.lsp = common.merge({
       path = "more_yielding",
       type = "TOGGLE",
       default = false
+    },
+    {
+      label = "Symbols Tree Visibility",
+      description = "Default visibility mode of the document symbols tree.",
+      path = "symbolstree_visibility",
+      type = "selection",
+      default = "auto",
+      values = {
+        { "Auto", "auto" },
+        { "Show", "show" },
+        { "Hide", "hide" },
+      },
+      set_value = function(value)
+        if value == "auto" then
+          lsp.symbols_tree:set_auto_hide(true)
+        else
+          lsp.symbols_tree:set_auto_hide(false)
+          if value == "show" then
+            lsp.symbols_tree:show()
+          else
+            lsp.symbols_tree:hide()
+          end
+        end
+      end
     }
   }
 }, config.plugins.lsp)
-
-
---
--- Main plugin functionality
---
-local lsp = {}
 
 ---List of registered servers
 ---@type table<string, lsp.server.options>
@@ -419,7 +447,7 @@ local function apply_edit(server, doc, text_edit, is_snippet)
   if
     not server.capabilities.positionEncoding
     or
-    server.capabilities.positionEncoding == Server.position_encoding_kind.UTF16
+    server.capabilities.positionEncoding == protocol.PositionEncodingKind.UTF16
   then
     line1, col1, line2, col2 = util.toselection(range, doc)
   else
@@ -524,8 +552,10 @@ local function autocomplete_onselect(index, item)
   if completion.textEdit then
     if dv then
       local is_snippet = completion.insertTextFormat
-        and completion.insertTextFormat == Server.insert_text_format.Snippet
-      local edit_applied = apply_edit(item.data.server, dv.doc, completion.textEdit, is_snippet)
+        and completion.insertTextFormat == protocol.InsertTextFormat.Snippet
+      local edit_applied = apply_edit(
+        item.data.server, dv.doc, completion.textEdit, is_snippet
+      )
       if edit_applied then
         -- Retrigger code completion if last char is a trigger
         -- this is useful for example with clangd when autocompleting
@@ -552,7 +582,7 @@ local function autocomplete_onselect(index, item)
     and
     completion.insertText and completion.insertTextFormat
     and
-    completion.insertTextFormat == Server.insert_text_format.Snippet
+    completion.insertTextFormat == protocol.InsertTextFormat.Snippet
   then
     ---@type core.doc
     local doc = dv.doc
@@ -943,11 +973,11 @@ function lsp.start_server(filename, project_directory)
           "window/showMessage",
           function(server, params)
             local log_func = "log_quiet"
-            if params.type == Server.message_type.Error then
+            if params.type == protocol.MessageType.Error then
               log_func = "error"
-            elseif params.type == Server.message_type.Warning then
+            elseif params.type == protocol.MessageType.Warning then
               log_func = "warn"
-            elseif params.type == Server.message_type.Info then
+            elseif params.type == protocol.MessageType.Info then
               log_func = "log"
             end
             core[log_func]("["..server.name.."] message: %s", params.message)
@@ -1040,11 +1070,11 @@ function lsp.open_document(doc)
         (
           server.capabilities.textDocumentSync
           ==
-          Server.text_document_sync_kind.Incremental
+          protocol.TextDocumentSyncKind.Incremental
           or
           server.capabilities.textDocumentSync
           ==
-          Server.text_document_sync_kind.Full
+          protocol.TextDocumentSyncKind.Full
           or
           (
             type(server.capabilities.textDocumentSync) == "table"
@@ -1233,17 +1263,17 @@ function lsp.update_document(doc, request_completion)
           and
           server.capabilities.textDocumentSync.change
           ~=
-          Server.text_document_sync_kind.None
+          protocol.TextDocumentSyncKind.None
         )
         or
         server.capabilities.textDocumentSync
         ~=
-        Server.text_document_sync_kind.None
+        protocol.TextDocumentSyncKind.None
       )
       and
       server:can_push() -- ensure we don't loose incremental changes
     then
-      local sync_kind = Server.text_document_sync_kind.Incremental
+      local sync_kind = protocol.TextDocumentSyncKind.Incremental
 
       if
         type(server.capabilities.textDocumentSync) == "table"
@@ -1261,7 +1291,7 @@ function lsp.update_document(doc, request_completion)
       end
 
       if
-        sync_kind == Server.text_document_sync_kind.Full
+        sync_kind == protocol.TextDocumentSyncKind.Full
         and
         not server.incremental_changes
       then
@@ -1356,7 +1386,7 @@ function lsp.request_completion(doc, line, col, forced)
         util.intable(char, capabilities.completionProvider.triggerCharacters)
       then
         request.context = {
-          triggerKind = Server.completion_trigger_Kind.TriggerCharacter,
+          triggerKind = protocol.CompletionTriggerKind.TriggerCharacter,
           triggerCharacter = char
         }
         trigger_char = true;
@@ -2437,6 +2467,23 @@ if autocomplete.add_icon then
 end
 
 --
+-- Add Symbols Tree
+--
+lsp.symbols_tree = SymbolsTree()
+lsp.symbols_tree:hide()
+lsp.symbols_tree:set_size(300 * SCALE, 100)
+if config.plugins.lsp.symbolstree_visibility == "auto" then
+  lsp.symbols_tree:set_auto_hide(true)
+elseif config.plugins.lsp.symbolstree_visibility == "show" then
+  lsp.symbols_tree:show()
+else
+  lsp.symbols_tree:hide()
+end
+
+local node = core.root_view:get_active_node()
+node:split("right", lsp.symbols_tree, {x = true}, true)
+
+--
 -- Commands
 --
 command.add(
@@ -2566,6 +2613,15 @@ command.add(nil, {
     lsp.toggle_diagnostics()
   end,
 
+  ["lsp:toggle-symbols-tree"] = function()
+    lsp.symbols_tree:set_auto_hide(false)
+    lsp.symbols_tree:toggle_visible(true, false, true)
+  end,
+
+  ["lsp:enable-symbols-tree-auto-hide"] = function()
+    lsp.symbols_tree:set_auto_hide(true)
+  end,
+
   ["lsp:stop-servers"] = function()
     lsp.stop_servers()
   end,
@@ -2597,6 +2653,7 @@ keymap.add {
   ["alt+e"]             = "lsp:view-document-diagnostics",
   ["ctrl+alt+e"]        = "lsp:view-all-diagnostics",
   ["alt+shift+e"]       = "lsp:toggle-diagnostics",
+  ["alt+shift+\\"]      = "lsp:toggle-symbols-tree",
   ["alt+c"]             = "lsp:view-call-hierarchy",
   ["alt+r"]             = "lsp:rename-symbol",
 }

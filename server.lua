@@ -5,13 +5,11 @@
 -- @copyright Jefferson Gonzalez
 -- @license MIT
 -- @inspiration: https://github.com/orbitalquark/textadept-lsp
---
--- LSP Documentation:
--- https://microsoft.github.io/language-server-protocol/specifications/specification-3-17
 
 local core = require "core"
 local json = require "plugins.lsp.json"
 local util = require "plugins.lsp.util"
+local protocol = require "plugins.lsp.protocol"
 local Object = require "core.object"
 
 ---@alias lsp.server.callback fun(server: lsp.server, ...)
@@ -23,7 +21,8 @@ local Object = require "core.object"
 ---@field method string
 ---@field data table|nil
 ---@field params table
----@field callback lsp.server.responsecb | nil
+---@field callback? lsp.server.responsecb
+---@field on_expired? lsp.server.callback
 ---@field overwritten boolean
 ---@field overwritten_callback lsp.server.responsecb | nil
 ---@field sending boolean
@@ -63,47 +62,35 @@ local Server = Object:extend()
 
 ---LSP Server constructor options
 ---@class lsp.server.options
+---Name of the server
 ---@field name string
+---Programming language identifier
 ---@field language string
+---Lua patterns to match the language files
 ---@field file_patterns table<integer, string>
+---Command to launch LSP server and optional arguments
 ---@field command table<integer, string>
----@field quit_timeout number
+---On Windows, avoid running the LSP server with cmd.exe (default: false)
 ---@field windows_skip_cmd boolean
+---Seconds before closing the server when not needed anymore (default: 60)
+---@field quit_timeout number
+---Optional table of settings to pass into the lsp
+---Note that also having a settings.json or settings.lua in
+---your workspace directory is supported
 ---@field settings table
+---Optional table of initializationOptions for the LSP
 ---@field init_options table
+---Set by default to 16 should only be modified if having issues with a server
 ---@field requests_per_second number
+---Some servers like bash language server support incremental changes
+---which are more performant but don't advertise it, set to true to force
+---incremental changes even if server doesn't advertise them.
 ---@field incremental_changes boolean
+---On some servers the language extension is not the proper language identifier
+---to send, set to true to always send 'language' property as identifier.
 ---@field id_not_extension boolean
-Server.options = {
-  ---Name of the server
-  name = "",
-  ---Programming language identifier
-  language = "",
-  ---Patterns to match the language files
-  file_patterns = {},
-  ---Command to launch LSP server and optional arguments
-  command = {},
-  ---On Windows, avoid running the LSP server with cmd.exe
-  windows_skip_cmd = false,
-  ---Seconds before closing the server when not needed anymore
-  quit_timeout = 60,
-  ---Optional table of settings to pass into the lsp
-  ---Note that also having a settings.json or settings.lua in
-  ---your workspace directory is supported
-  settings = {},
-  ---Optional table of initializationOptions for the LSP
-  init_options = {},
-  ---Set by default to 16 should only be modified if having issues with a server
-  requests_per_second = 32,
-  ---Some servers like bash language server support incremental changes
-  ---which are more performant but don't advertise it, set to true to force
-  ---incremental changes even if server doesn't advertise them.
-  incremental_changes = false,
-  ---True to debug the lsp client when developing it
-  verbose = false,
-  ---
-  id_not_extension = false
-}
+---Set to true to generate debugging messages
+---@field verbose boolean
 
 ---Default timeout when sending a request to lsp server.
 ---@type integer Time in seconds
@@ -113,129 +100,55 @@ Server.DEFAULT_TIMEOUT = 10
 ---@type integer Amount of bytes
 Server.BUFFER_SIZE = 1024 * 10
 
----LSP Docs: /#errorCodes
-Server.error_code = {
-  ParseError                      = -32700,
-  InvalidRequest                  = -32600,
-  MethodNotFound                  = -32601,
-  InvalidParams                   = -32602,
-  InternalError                   = -32603,
-  jsonrpcReservedErrorRangeStart  = -32099,
-  serverErrorStart                = -32099,
-  ServerNotInitialized            = -32002,
-  UnknownErrorCode                = -32001,
-  jsonrpcReservedErrorRangeEnd    = -32000,
-  serverErrorEnd                  = -32000,
-  lspReservedErrorRangeStart      = -32899,
-  ContentModified                 = -32801,
-  RequestCancelled                = -32800,
-  lspReservedErrorRangeEnd        = -32800,
-}
-
----LSP Docs: /#completionTriggerKind
-Server.completion_trigger_Kind = {
-  Invoked = 1,
-  TriggerCharacter = 2,
-  TriggerForIncompleteCompletions = 3
-}
-
----LSP Docs: /#diagnosticSeverity
-Server.diagnostic_severity = {
-  Error = 1,
-  Warning = 2,
-  Information = 3,
-  Hint = 4
-}
-
----LSP Docs: /#textDocumentSyncKind
-Server.text_document_sync_kind = {
-  None = 0,
-  Full = 1,
-  Incremental = 2
-}
-
----LSP Docs: /#completionItemKind
-Server.completion_item_kind = {
-  'Text', 'Method', 'Function', 'Constructor', 'Field', 'Variable', 'Class',
-  'Interface', 'Module', 'Property', 'Unit', 'Value', 'Enum', 'Keyword',
-  'Snippet', 'Color', 'File', 'Reference', 'Folder', 'EnumMember',
-  'Constant', 'Struct', 'Event', 'Operator', 'TypeParameter'
-}
-
----LSP Docs: /#symbolKind
-Server.symbol_kind = {
-  'File', 'Module', 'Namespace', 'Package', 'Class', 'Method', 'Property',
-  'Field', 'Constructor', 'Enum', 'Interface', 'Function', 'Variable',
-  'Constant', 'String', 'Number', 'Boolean', 'Array', 'Object', 'Key',
-  'Null', 'EnumMember', 'Struct', 'Event', 'Operator', 'TypeParameter'
-}
-
----LSP Docs: /#insertTextFormat
-Server.insert_text_format = {
-  PlainText = 1,
-  Snippet = 2
-}
-
----LSP Docs: /#messageType
----@enum
-Server.message_type = {
-	Error = 1,
-	Warning = 2,
-	Info = 3,
-	Log = 4
-}
-
----LSP Docs: /#positionEncodingKind
----@enum
-Server.position_encoding_kind = {
-  UTF8  = 'utf-8',
-  UTF16 = 'utf-16',
-  UTF32 = 'utf-32'
-}
-
 ---@class lsp.server.requestoptions
+---List of name->value parameters sent to request.
 ---@field params table<string,any>
----@field data table @Optional data appended to request.
----@field callback lsp.server.responsecb @Default callback executed when a response is received.
----@field overwrite boolean @Substitute same previous request with new one if not sent.
----@field overwritten_callback lsp.server.responsecb @Executed in place of original response callback if the request should have been overwritten but was already sent.
----@field raw_data string @Request body used when sending a raw request.
+---Optional data appended to request.
+---@field data table
+---Default callback executed when a response is received.
+---@field callback lsp.server.responsecb
+---Default callback executed when the request expires before receiving a response.
+---@field on_expired lsp.server.callback
+---Substitute same previous request with new one if not sent.
+---@field overwrite boolean
+---Executed in place of original response callback if the request should have been overwritten but was already sent.
+---@field overwritten_callback lsp.server.responsecb
+---Request body used when sending a raw request.
+---@field raw_data string
 
 ---Get a completion kind label from its id or empty string if not found.
----@param id integer
+---@param id lsp.protocol.CompletionItemKind
 ---@return string
 function Server.get_completion_item_kind(id)
-  return Server.completion_item_kind[id] or ""
+  return protocol.CompletionItemKindString[id] or ""
 end
 
----Get list of completion kinds.
+---Get list of supported completion kinds.
 ---@return table
 function Server.get_completion_items_kind_list()
   local list = {}
-  for i = 1, #Server.completion_item_kind do
+  for i = 1, #protocol.CompletionItemKindString do
     if i ~= 15 then --Disable snippets
       table.insert(list, i)
     end
   end
-
   return list
 end
 
 ---Get a symbol kind label from its id or empty string if not found.
----@param id integer
+---@param id lsp.protocol.SymbolKind
 ---@return string
 function Server.get_symbol_kind(id)
-  return Server.symbol_kind[id] or ""
+  return protocol.SymbolKindString[id] or ""
 end
 
 ---Get list of symbol kinds.
 ---@return table
 function Server.get_symbols_kind_list()
   local list = {}
-  for i = 1, #Server.symbol_kind do
+  for i = 1, #protocol.SymbolKindString do
     list[i] = i
   end
-
   return list
 end
 
@@ -442,7 +355,7 @@ function Server:initialize(workspace, editor_name, editor_version)
           -- regularExpressions = {},
           -- markdown = {},
           positionEncodings = {
-            Server.position_encoding_kind.UTF16
+            protocol.PositionEncodingKind.UTF16
           }
         },
         -- experimental = nil
@@ -566,14 +479,14 @@ end
 ---Respond to a an unknown server request with a method not found error code.
 ---@param id integer
 ---@param error_message? string
----@param error_code? integer
+---@param error_code? lsp.protocol.ErrorCodes
 ---@return boolean sent
 function Server:respond_error(id, error_message, error_code)
   local message = {
     jsonrpc = '2.0',
     id = id,
     error = {
-      code = error_code or Server.error_code.MethodNotFound,
+      code = error_code or protocol.ErrorCodes.MethodNotFound,
       message = error_message or "method not found"
     }
   }
@@ -709,6 +622,8 @@ function Server:process_requests()
   end
 
   if remove_request then
+    local request = self.request_list[remove_request]
+    if request.on_expired then request.on_expired(self) end
     table.remove(self.request_list, remove_request)
     if self.verbose then
       self:log("Request '%s' expired without response", remove_request)
@@ -918,6 +833,7 @@ function Server:process_raw()
     sent = true
     break
   end
+
   if sent then collectgarbage("collect") end
 end
 
@@ -968,6 +884,7 @@ local notifications_whitelist = {
 ---Queue a new notification but ignores new ones if the hit rate was reached.
 ---@param method string
 ---@param options lsp.server.requestoptions
+---@return boolean queued
 function Server:push_notification(method, options)
   assert(options.params, "please provide the parameters for the notification")
 
@@ -980,7 +897,7 @@ function Server:push_notification(method, options)
         notification.params = options.params
         notification.callback = options.callback or nil
         notification.data = options.data or nil
-        return
+        return true
       end
     end
   end
@@ -992,7 +909,7 @@ function Server:push_notification(method, options)
     and
     not util.intable(method, notifications_whitelist)
   then
-    return
+    return false
   end
 
   if self.verbose then
@@ -1003,13 +920,15 @@ function Server:push_notification(method, options)
     )
   end
 
-  -- Store the notification for later processing on responses_loop
+  -- Store the notification for later processing
   table.insert(self.notification_list, {
     method = method,
     params = options.params,
     callback = options.callback or nil,
     data = options.data or nil
   })
+
+  return true
 end
 
 -- Requests that should bypass the hitrate limit
@@ -1020,9 +939,10 @@ local requests_whitelist = {
 ---Queue a new request but ignores new ones if the hit rate was reached.
 ---@param method string
 ---@param options lsp.server.requestoptions
+---@return boolean queued
 function Server:push_request(method, options)
   if not self.initialized and method ~= "initialize" then
-    return
+    return false
   end
 
   assert(options.params, "please provide the parameters for the request")
@@ -1036,13 +956,14 @@ function Server:push_request(method, options)
         else
           request.params = options.params
           request.callback = options.callback or nil
+          request.on_expired = options.on_expired or nil
           request.overwritten_callback = options.overwritten_callback or nil
           request.data = options.data or nil
           request.timestamp = 0
           if self.verbose then
             self:log("Overwriting request %s", tostring(method))
           end
-          return
+          return true
         end
       end
     end
@@ -1055,7 +976,7 @@ function Server:push_request(method, options)
     and
     not util.intable(method, requests_whitelist)
   then
-    return
+    return false
   end
 
   if self.verbose then
@@ -1071,11 +992,14 @@ function Server:push_request(method, options)
     method = method,
     params = options.params,
     callback = options.callback or nil,
+    on_expired = options.on_expired or nil,
     overwritten_callback = options.overwritten_callback or nil,
     data = options.data or nil,
     timestamp = 0,
     times_sent = 0
   })
+
+  return true
 end
 
 ---Queue a client response to a server request which can be an error
@@ -1461,7 +1385,7 @@ function Server:on_request(request)
     request.id,
     nil,
     {
-      code = Server.error_code.MethodNotFound,
+      code = protocol.ErrorCodes.MethodNotFound,
       message = "Method not found"
     }
   )
