@@ -46,6 +46,7 @@ Stuff that is currently implemented:
   (**alt+shift+e** to toggle)
 * List all documents with diagnostics (**ctrl+alt+e**)
 * Snippets processing using the [snippets] plugin
+* Current document symbols tree view (**alt+shift+\\**)
 
 ## Setting a LSP Server
 
