@@ -121,7 +121,14 @@ function SymbolsTree:add_results(results, parent)
 
     item.tooltip = SYMBOLS_KIND_ICONS[result.kind].name
 
-    table.insert(items, item)
+    local container = result.containerName
+      and self:query_item(result.containerName, parent or items) or nil
+    if container then
+      container.childs = container.childs or {}
+      table.insert(container.childs, item)
+    else
+      table.insert(items, item)
+    end
   end
 
   if not parent then
@@ -130,6 +137,35 @@ function SymbolsTree:add_results(results, parent)
   else
     parent.childs = items
   end
+end
+
+---Retrieve an item by name using the query format:
+---"parent_name>child_name_2>child_name_2>etc..."
+---@param query string
+---@param items? widget.treelist.item[]
+---@param separator? string Use a different separator (default: >)
+---@return widget.treelist.item?
+function SymbolsTree:query_item(query, items, separator)
+  local parent = items or self.items
+  local item = nil
+  separator = separator or ">"
+  for name in query:gmatch("([^"..separator.."]+)") do
+      if parent then
+        local found = false
+        for _, child in ipairs(parent) do
+          if name == child.name then
+            item = child
+            parent = child.childs
+            found = true
+            break
+          end
+        end
+        if not found then return nil end
+      else
+        return nil
+      end
+  end
+  return item
 end
 
 ---@param item widget.treelist.item
