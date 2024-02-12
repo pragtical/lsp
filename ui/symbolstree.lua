@@ -139,35 +139,6 @@ function SymbolsTree:add_results(results, parent)
   end
 end
 
----Retrieve an item by name using the query format:
----"parent_name>child_name_2>child_name_2>etc..."
----@param query string
----@param items? widget.treelist.item[]
----@param separator? string Use a different separator (default: >)
----@return widget.treelist.item?
-function SymbolsTree:query_item(query, items, separator)
-  local parent = items or self.items
-  local item = nil
-  separator = separator or ">"
-  for name in query:gmatch("([^"..separator.."]+)") do
-      if parent then
-        local found = false
-        for _, child in ipairs(parent) do
-          if name == child.name then
-            item = child
-            parent = child.childs
-            found = true
-            break
-          end
-        end
-        if not found then return nil end
-      else
-        return nil
-      end
-  end
-  return item
-end
-
 ---@param item widget.treelist.item
 ---@param active boolean
 ---@param hovered boolean
@@ -284,6 +255,11 @@ function SymbolsTree:update_symbols()
         callback = function(server, response)
           if response.result and response.result and #response.result > 0 then
             self:add_results(response.result)
+          else
+            self.items = {
+              {name = "no-symbols", label = "No Symbols Found"}
+            }
+            self.symbols_loaded = false
           end
         end,
         on_expired = function()
