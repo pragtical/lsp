@@ -84,11 +84,15 @@ local Server = Object:extend()
 ---@field requests_per_second number
 ---Some servers like bash language server support incremental changes
 ---which are more performant but don't advertise it, set to true to force
----incremental changes even if server doesn't advertise them.
+---incremental changes even if server doesn't advertise them
 ---@field incremental_changes boolean
 ---On some servers the language extension is not the proper language identifier
----to send, set to true to always send 'language' property as identifier.
+---to send, set to true to always send 'language' property as identifier
 ---@field id_not_extension boolean
+---Tell the server if we want to enable snippets
+---@field snippets boolean
+---Tell the server we support snippets even if snippet plugins not installed
+---@field fake_snippets boolean
 ---Set to true to generate debugging messages
 ---@field verbose boolean
 
@@ -143,7 +147,7 @@ function Server.get_symbol_kind(id)
 end
 
 ---Get list of symbol kinds.
----@return table
+---@return table<integer,integer>
 function Server.get_symbols_kind_list()
   local list = {}
   for i = 1, #protocol.SymbolKindString do
@@ -153,7 +157,7 @@ function Server.get_symbols_kind_list()
 end
 
 ---Instantiates a new LSP server.
----@param options table
+---@param options lsp.server.options
 function Server:new(options)
   Server.super.new(self)
 
