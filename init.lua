@@ -551,6 +551,16 @@ local function autocomplete_onselect(index, item)
   local dv = get_active_docview()
   if completion.textEdit then
     if dv then
+      -- Restore previous partial since the complete request is async and
+      -- new text could have been written while retrieving autocomplete items
+      -- which results in invalid insert positions if we don't revert partial
+      local current_partial = {autocomplete.get_partial_symbol()}
+      if current_partial[1] ~= item.data.partial[1] then
+        local partial, pl1, pc1, pl2, pc2 = table.unpack(current_partial)
+        dv.doc:remove(pl1, pc1, pl2, pc2)
+        partial, pl1, pc1 = table.unpack(item.data.partial)
+        dv.doc:insert(pl1, pc1, partial)
+      end
       local is_snippet = completion.insertTextFormat
         and completion.insertTextFormat == protocol.InsertTextFormat.Snippet
       local edit_applied = apply_edit(
@@ -587,8 +597,7 @@ local function autocomplete_onselect(index, item)
     ---@type core.doc
     local doc = dv.doc
     if dv then
-      local line2, col2 = doc:get_selection()
-      local line1, col1 = doc:position_offset(line2, col2, translate.start_of_word)
+      local _, line1, col1, line2, col2 = autocomplete.get_partial_symbol()
       doc:set_selection(line1, col1, line2, col2)
       snippets.execute {format = 'lsp', template = completion.insertText}
       return true
@@ -1402,6 +1411,8 @@ function lsp.request_completion(doc, line, col, forced)
         return false
       end
 
+      local partial = { autocomplete.get_partial_symbol() }
+
       server:push_request('textDocument/completion', {
         params = request,
         overwrite = true,
@@ -1511,7 +1522,9 @@ function lsp.request_completion(doc, line, col, forced)
               info = info,
               desc = desc,
               data = {
-                server = server, completion_item = symbol
+                server = server,
+                completion_item = symbol,
+                partial = partial
               },
               onselect = autocomplete_onselect
             }
