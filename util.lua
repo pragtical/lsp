@@ -216,8 +216,10 @@ function util.jsonprettify(code)
 
   if config.plugins.lsp.log_file and #config.plugins.lsp.log_file > 0 then
     local log = io.open(config.plugins.lsp.log_file, "a+")
-    log:write("Output: \n" .. tostring(code) .. "\n\n")
-    log:close()
+    if log then
+      log:write("Output: \n" .. tostring(code) .. "\n\n")
+      log:close()
+    end
   end
 
   return code
@@ -256,30 +258,52 @@ function util.intable(value, table_array)
   return false
 end
 
+---Used on windows to check if command is a valid executable on the given path.
+---
+---If the command does not contains a file extension it will automatically
+---search using the extensions: .exe, .cmd or .bat in that same order.
+---@param command string
+---@param path? string
+---@return boolean
+local function win_command_exists(command, path)
+  path = path or ""
+  local extensions = {"exe", "cmd", "bat"}
+  local has_extension = false
+  for _, ext in ipairs(extensions) do
+    if command:lower():find("%."..ext.."$") then
+      has_extension = true
+      break
+    end
+  end
+  if has_extension then
+    if util.file_exists(path .. command) then
+      return true
+    end
+  else
+    for _, ext in ipairs(extensions) do
+      local command_ext = command .. "." .. ext
+      if util.file_exists(path .. command_ext) then
+        return true
+      end
+    end
+  end
+  return false
+end
+
 ---Check if a command exists on the system by inspecting the PATH envar.
 ---@param command string
 ---@return boolean
 function util.command_exists(command)
-  local command_win = nil
+  local is_win = PLATFORM == "Windows"
 
-  if PLATFORM == "Windows" then
-    if not command:find("%.exe$") then
-      command_win = command .. ".exe"
-    end
-  end
-
-  if
-    util.file_exists(command)
-    or
-    (command_win and util.file_exists(command_win))
-  then
+  if util.file_exists(command) or (is_win and win_command_exists(command)) then
     return true
   end
 
-  local env_path = os.getenv("PATH")
+  local env_path = os.getenv("PATH") or ""
   local path_list = {}
 
-  if PLATFORM ~= "Windows" then
+  if not is_win then
     path_list = util.split(env_path, ":")
   else
     path_list = util.split(env_path, ";")
@@ -293,6 +317,7 @@ function util.command_exists(command)
       not string.find(env_path, "/usr/local/bin", 1, true)
     then
       table.insert(path_list, 1, "/usr/local/bin")
+      system.setenv("PATH", table.concat(path_list, ":"))
     end
   end
 
@@ -300,7 +325,7 @@ function util.command_exists(command)
     local path_fix = path:gsub("[/\\]$", "") .. PATHSEP
     if util.file_exists(path_fix .. command) then
       return true
-    elseif command_win and util.file_exists(path_fix .. command_win) then
+    elseif is_win and win_command_exists(command, path_fix) then
       return true
     end
   end
