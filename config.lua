@@ -170,7 +170,7 @@ lspconfig.cmakels = add_lsp {
 }
 
 ---# Crystal
---- __Status__: Untested
+--- __Status__: Works
 --- __Site__: https://github.com/elbywan/crystalline
 --- __Installation__: 'paru -S crystalline-bin'
 lspconfig.crystalline = add_lsp {
