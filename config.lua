@@ -10,7 +10,6 @@
 --
 
 local lsp = require "plugins.lsp"
-local core = require "core"
 local config = require "core.config"
 local snippets = pcall(require, "plugins.snippets") and config.plugins.lsp.snippets
 
@@ -66,6 +65,8 @@ end
 ---@field incremental_changes boolean
 ---Set to true to debug the lsp client when developing it
 ---@field verbose boolean
+---Allows you to modify the options dynamically on the setup call.
+---@field on_setup? fun(options:lsp.config.options)
 
 ---@class lsp.config.server
 ---Register the lsp server for usage.
@@ -80,6 +81,9 @@ local function add_lsp(options)
   return {
     setup = function(user_options)
       local merged_options = merge(options, user_options)
+      if merged_options.on_setup then
+        merged_options.on_setup(merged_options)
+      end
       lsp.add_server(merged_options)
     end,
     get_options = function()
@@ -420,10 +424,15 @@ lspconfig.psalmls = add_lsp {
   name = "psalm-language-server",
   language = "php",
   file_patterns = { "%.php$" },
-  command = {
-    core.root_project():absolute_path("vendor/bin/psalm-language-server"),
-    '--config', core.root_project():absolute_path("psalm.xml"),
-  },
+  on_setup = function(options)
+    if not options.command then
+      local core = require "core"
+      options.command = {
+        core.root_project():absolute_path("vendor/bin/psalm-language-server"),
+        '--config', core.root_project():absolute_path("psalm.xml"),
+      }
+    end
+  end,
   verbose = false
 }
 
