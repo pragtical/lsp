@@ -1924,10 +1924,20 @@ function lsp.request_document_format(doc)
     servers_found = true
     local server = lsp.servers_running[name]
     if server.capabilities.documentFormattingProvider then
-      local trim_lines, trim_final = true, true
-      if config.plugins.trimwhitespace then
-        trim_lines = config.plugins.trimwhitespace.enabled
-        trim_final = config.plugins.trimwhitespace.trim_empty_end_lines
+      local trim_trailing_whitespace = false
+      local trim_newlines = false
+      if type(config.plugins.trimwhitespace) == "table"
+         and config.plugins.trimwhitespace.enabled
+      then
+        trim_trailing_whitespace = true
+        trim_newlines = config.plugins.trimwhitespace.trim_empty_end_lines
+      elseif config.plugins.trimwhitespace then -- Plugin enabled with true
+        trim_trailing_whitespace = true
+        trim_newlines = true
+      end
+      local indent_type, indent_size, indent_confirmed = doc:get_indent_info()
+      if not indent_confirmed then
+        indent_type, indent_size = config.tab_type, config.indent_size
       end
       server:push_request('textDocument/formatting', {
         params = {
@@ -1935,11 +1945,11 @@ function lsp.request_document_format(doc)
             uri = util.touri(core.project_absolute_path(doc.filename)),
           },
           options = {
-            tabSize = config.indent_size,
-            insertSpaces = config.tab_type == "soft",
-            trimTrailingWhitespace = trim_lines,
-            trimFinalNewlines = trim_final,
-            insertFinalNewline = false
+            tabSize = indent_size,
+            insertSpaces = indent_type == "soft",
+            trimTrailingWhitespace = trim_trailing_whitespace,
+            insertFinalNewline = false,
+            trimFinalNewlines = trim_newlines
           }
         },
         callback = function(server, response)
