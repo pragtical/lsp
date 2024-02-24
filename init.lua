@@ -426,8 +426,9 @@ end
 ---@param doc core.doc
 ---@param text_edit table
 ---@param is_snippet boolean
+---@param update_cursor_position boolean
 ---@return boolean True on success
-local function apply_edit(server, doc, text_edit, is_snippet)
+local function apply_edit(server, doc, text_edit, is_snippet, update_cursor_position)
   local range = nil
 
   if text_edit.range then
@@ -473,7 +474,9 @@ local function apply_edit(server, doc, text_edit, is_snippet)
   end
 
   doc:insert(line1, col1, text)
-  doc:set_selection(line2, col1+#text, line2, col1+#text)
+  if update_cursor_position then
+    doc:set_selection(line2, col1+#text, line2, col1+#text)
+  end
 
   return true
 end
@@ -564,7 +567,7 @@ local function autocomplete_onselect(index, item)
       local is_snippet = completion.insertTextFormat
         and completion.insertTextFormat == protocol.InsertTextFormat.Snippet
       local edit_applied = apply_edit(
-        item.data.server, dv.doc, completion.textEdit, is_snippet
+        item.data.server, dv.doc, completion.textEdit, is_snippet, true
       )
       if edit_applied then
         -- Retrigger code completion if last char is a trigger
@@ -1956,8 +1959,13 @@ function lsp.request_document_format(doc)
           if response.error and response.error.message then
             log(server, "Error formatting: " .. response.error.message)
           elseif response.result and #response.result > 0 then
-            for _, result in pairs(response.result) do
-              apply_edit(server, doc, result)
+            -- Apply edits in reverse, as the ranges don't consider
+            -- the intermediate states.
+            -- Consider the TextEdits as already sorted.
+            -- If there are servers that don't sort their TextEdits,
+            -- we'll add sorting code.
+            for i=#response.result,1,-1 do
+              apply_edit(server, doc, response.result[i], false, false)
             end
             log(server, "Formatted document")
           else
