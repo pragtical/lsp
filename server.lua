@@ -72,6 +72,8 @@ local Server = Object:extend()
 ---@field command table<integer, string>
 ---On Windows, avoid running the LSP server with cmd.exe (default: false)
 ---@field windows_skip_cmd boolean
+---Enviroment variables to set for the server command.
+---@field env table<string, string>
 ---Seconds before closing the server when not needed anymore (default: 60)
 ---@field quit_timeout number
 ---Optional table of settings to pass into the lsp
@@ -193,7 +195,8 @@ function Server:new(options)
     options.command, {
       stderr = process.REDIRECT_PIPE,
       -- needed on some not fully implemented lsp servers like psalm
-      cwd = core.root_project().path
+      cwd = core.root_project().path,
+      env = options.env
     }
   )
   self.quit_timeout = options.quit_timeout or 60
