@@ -164,9 +164,25 @@ config.plugins.lsp.mouse_hover_delay = 300
 ---@type boolean
 config.plugins.lsp.show_diagnostics = true
 
+---Amount of milliseconds to delay updating the inline diagnostics.
+---@type number
+config.plugins.lsp.diagnostics_delay = 500
+
+---Wether to enable snippets processing.
+---@type boolean
+config.plugins.lsp.snippets = true
+
+---Allow the application of additional text edits on completion, eg: #includes, imports, etc...
+---@type boolean
+config.plugins.lsp.apply_additional_edits = true
+
 ---Stop servers that aren't needed by any of the open files
 ---@type boolean
 config.plugins.lsp.stop_unneeded_servers = true
+
+---The amount of seconds to keep the server active before stopping it
+---@type number
+config.plugins.lsp.server_quit_timeout = 60
 
 ---Set to a file path to log all json
 ---@type string
@@ -190,6 +206,10 @@ config.plugins.lsp.force_verbosity_off = false
 ---when receiving large responses, but will affect LSP performance.
 ---@type boolean
 config.plugins.lsp.more_yielding = false
+
+---Determines the default visibility of the symbols tree (show, hide or auto).
+---@type string
+config.plugins.lsp.symbolstree_visibility = "auto"
 ```
 
 ## TODO
