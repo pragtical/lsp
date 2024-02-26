@@ -79,6 +79,8 @@ local lsp = {}
 ---@field diagnostics_delay number
 ---Wether to enable snippets processing.
 ---@field snippets boolean
+---Allow the application of additional text edits on completion, eg: #includes, imports, etc...
+---@field apply_additional_edits boolean
 ---Stop servers that aren't needed by any of the open files
 ---@field stop_unneeded_servers boolean
 ---The amount of seconds to keep the server active before stopping it
@@ -98,6 +100,7 @@ config.plugins.lsp = common.merge({
   show_diagnostics = true,
   diagnostics_delay = 500,
   snippets = true,
+  apply_additional_edits = true,
   stop_unneeded_servers = true,
   server_quit_timeout = 60,
   log_file = "",
@@ -146,6 +149,13 @@ config.plugins.lsp = common.merge({
       label = "Snippets",
       description = "Snippets processing using lsp_snippets, may need a restart.",
       path = "snippets",
+      type = "TOGGLE",
+      default = true
+    },
+    {
+      label = "Apply Additional Completion Edits",
+      description = "Allow the application of additional text edits on completion, eg: #includes, imports, etc...",
+      path = "apply_additional_edits",
       type = "TOGGLE",
       default = true
     },
@@ -540,6 +550,7 @@ local function autocomplete_onhover(index, item)
         elseif server.verbose then
           server:log("Resolve returned empty response")
         end
+        item.data.resolved = true
       end
     })
   end
@@ -552,6 +563,7 @@ end
 local function autocomplete_onselect(index, item)
   local completion = item.data.completion_item
   local dv = get_active_docview()
+  local edit_applied = false
   if completion.textEdit then
     if dv then
       -- Restore previous partial since the complete request is async and
@@ -566,7 +578,7 @@ local function autocomplete_onselect(index, item)
       end
       local is_snippet = completion.insertTextFormat
         and completion.insertTextFormat == protocol.InsertTextFormat.Snippet
-      local edit_applied = apply_edit(
+      edit_applied = apply_edit(
         item.data.server, dv.doc, completion.textEdit, is_snippet, true
       )
       if edit_applied then
@@ -588,7 +600,6 @@ local function autocomplete_onselect(index, item)
           end
         end
       end
-      return edit_applied
     end
   elseif
     dv and snippets_found and config.plugins.lsp.snippets
@@ -603,10 +614,25 @@ local function autocomplete_onselect(index, item)
       local _, line1, col1, line2, col2 = autocomplete.get_partial_symbol()
       doc:set_selection(line1, col1, line2, col2)
       snippets.execute {format = 'lsp', template = completion.insertText}
-      return true
+      edit_applied = true
     end
   end
-  return false
+  if
+    dv and edit_applied and completion.additionalTextEdits
+    and
+    config.plugins.lsp.apply_additional_edits
+  then
+    -- TODO: Breaks snippets execution, in future we should apply additional
+    -- edits first and update completion item range before insert
+    core.add_thread(function()
+      while not item.data.resolved do coroutine.yield() end
+      for i=#completion.additionalTextEdits, 1, -1 do
+        local edit = completion.additionalTextEdits[i]
+        apply_edit(item.data.server, dv.doc, edit, false, false)
+      end
+    end)
+  end
+  return edit_applied
 end
 
 --
@@ -1527,7 +1553,8 @@ function lsp.request_completion(doc, line, col, forced)
               data = {
                 server = server,
                 completion_item = symbol,
-                partial = partial
+                partial = partial,
+                resolved = true
               },
               onselect = autocomplete_onselect
             }
@@ -1537,6 +1564,7 @@ function lsp.request_completion(doc, line, col, forced)
               and
               not symbol.documentation
             then
+              symbols.items[label].data.resolved = false
               symbols.items[label].onhover = autocomplete_onhover
             end
 
