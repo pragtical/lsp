@@ -1016,6 +1016,8 @@ function lsp.start_server(filename, project_directory)
               log_func = "warn"
             elseif params.type == protocol.MessageType.Info then
               log_func = "log"
+            elseif params.type == protocol.MessageType.Debug then
+              log_func = "log_quiet"
             end
             core[log_func]("["..server.name.."] message: %s", params.message)
           end
