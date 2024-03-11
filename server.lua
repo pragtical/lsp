@@ -1100,7 +1100,8 @@ end
 ---@param timeout integer Time in seconds, set to 0 to not wait
 ---@return table[]|boolean Responses list or false if failed
 function Server:read_responses(timeout)
-  if not self.proc:running() then
+  local proc = self.proc -- save current process to avoid it changing
+  if not proc or not proc:running() then
     return false
   end
 
