@@ -428,23 +428,14 @@ lspconfig.intelephense = add_lsp {
   verbose = false
 }
 
----# psalm-language-server
---- __Status__: Works but has issues
---- __Site__: https://github.com/vimeo/psalm
---- __Installation__: https://github.com/vimeo/psalm/blob/5.x/docs/running_psalm/installation.md
-lspconfig.psalmls = add_lsp {
-  name = "psalm-language-server",
-  language = "php",
-  file_patterns = { "%.php$" },
-  on_setup = function(options)
-    if not options.command then
-      local core = require "core"
-      options.command = {
-        core.root_project():absolute_path("vendor/bin/psalm-language-server"),
-        '--config', core.root_project():absolute_path("psalm.xml"),
-      }
-    end
-  end,
+---# java
+--- __Status__: Works
+--- __Site__: https://github.com/eclipse/eclipse.jdt.ls
+lspconfig.jdtls = add_lsp {
+  name = "jdtls",
+  language = "java",
+  file_patterns = { "%.java$" },
+  command = { "jdtls" },
   verbose = false
 }
 
@@ -572,6 +563,26 @@ lspconfig.perlnavigator = add_lsp {
       perlPath = "perl"
     }
   },
+  verbose = false
+}
+
+---# psalm-language-server
+--- __Status__: Works but has issues
+--- __Site__: https://github.com/vimeo/psalm
+--- __Installation__: https://github.com/vimeo/psalm/blob/5.x/docs/running_psalm/installation.md
+lspconfig.psalmls = add_lsp {
+  name = "psalm-language-server",
+  language = "php",
+  file_patterns = { "%.php$" },
+  on_setup = function(options)
+    if not options.command then
+      local core = require "core"
+      options.command = {
+        core.root_project():absolute_path("vendor/bin/psalm-language-server"),
+        '--config', core.root_project():absolute_path("psalm.xml"),
+      }
+    end
+  end,
   verbose = false
 }
 
