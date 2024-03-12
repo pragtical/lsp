@@ -85,6 +85,8 @@ local Server = Object:extend()
 ---@field settings table
 ---Optional table of initializationOptions for the LSP
 ---@field init_options table
+---Called when the server is started allowing subscription of listeners, etc...
+---@field on_start? fun(server: lsp.server)
 ---Set by default to 16 should only be modified if having issues with a server
 ---@field requests_per_second number
 ---Some servers like bash language server support incremental changes
@@ -214,6 +216,8 @@ function Server:new(options)
   self.incremental_changes = options.incremental_changes or false
 
   self.read_responses_coroutine = nil
+
+  if options.on_start then options.on_start(self) end
 end
 
 ---Starts the LSP server process, any listeners should be registered before
