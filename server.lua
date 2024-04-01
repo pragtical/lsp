@@ -60,6 +60,7 @@ local Object = require "core.object"
 ---@field public quit_timeout number
 ---@field public exit_timer lsp.timer | nil
 ---@field public capabilities table
+---@field public custom_capabilities table
 ---@field public yield_on_reads boolean
 ---@field public running boolean
 local Server = Object:extend()
@@ -86,6 +87,8 @@ local Server = Object:extend()
 ---@field settings table
 ---Optional table of initializationOptions for the LSP
 ---@field init_options table
+---Optional table of capabilities that will be merged with our default one
+---@field custom_capabilities table
 ---Called when the server is started allowing subscription of listeners, etc...
 ---@field on_start? fun(server: lsp.server)
 ---Set by default to 16 should only be modified if having issues with a server
@@ -247,6 +250,7 @@ function Server:new(options)
   self.quit_timeout = options.quit_timeout or 60
   self.exit_timer = nil
   self.capabilities = nil
+  self.custom_capabilities = options.custom_capabilities
   self.yield_on_reads = false
   self.incremental_changes = options.incremental_changes or false
 
@@ -283,7 +287,7 @@ function Server:initialize(workspace, editor_name, editor_version)
         {uri = root_uri, name = util.getpathname(workspace)}
       },
       initializationOptions = self.init_options,
-      capabilities = {
+      capabilities = util.deep_merge({
         workspace = {
           configuration = true -- 'workspace/configuration' requests
         },
@@ -421,7 +425,7 @@ function Server:initialize(workspace, editor_name, editor_version)
           }
         },
         -- experimental = nil
-      }
+      }, self.custom_capabilities)
     },
     callback = function(server, response)
       if server.verbose then
