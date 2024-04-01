@@ -1335,7 +1335,7 @@ end
 function Server:on_response(response, request)
   if self.verbose then
     self:log(
-      "Recieved response '%s' with result:\n%s",
+      "Received response '%s' with result:\n%s",
       response.id,
       util.jsonprettify(json.encode(response))
     )
@@ -1386,7 +1386,7 @@ end
 function Server:on_request(request)
   if self.verbose then
     self:log(
-      "Recieved request '%s' with data:\n%s",
+      "Received request '%s' with data:\n%s",
       request.method,
       util.jsonprettify(json.encode(request))
     )
@@ -1440,7 +1440,7 @@ end
 function Server:on_message(method, params)
   if self.verbose then
     self:log(
-      "Recieved notification '%s' with params:\n%s",
+      "Received notification '%s' with params:\n%s",
       method,
       util.jsonprettify(json.encode(params))
     )
