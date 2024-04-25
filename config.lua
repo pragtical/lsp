@@ -928,6 +928,30 @@ lspconfig.vimls = add_lsp {
   verbose = false
 }
 
+---# V
+--- __Status__: Works
+--- __Site__: https://github.com/vlang/v-analyzer
+--- __Installation__: https://github.com/vlang/v-analyzer?tab=readme-ov-file#installation
+lspconfig.v_analyzer = add_lsp {
+  name = "v_analyzer",
+  language = "v",
+  file_patterns = { "%.vv?$", "%.vsh$" },
+  command = { "v-analyzer", "--stdio" },
+  verbose = false
+}
+
+---# Vala - vala-language-server
+--- __Status__: Works
+--- __Site__: https://github.com/vala-lang/vala-language-server
+--- __Installation__: `paru -S vala-language-server`
+lspconfig.vala_ls = add_lsp {
+  name = "vala_ls",
+  language = "vala",
+  file_patterns = { "%.vala$" },
+  command = { "vala-language-server" },
+  verbose = false
+}
+
 ---# vlang-vls
 --- __Status__: Initializes but doesn't responds to completion requests
 --- at least it helped improve lit-xl-lsp requests mechanism
