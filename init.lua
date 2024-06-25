@@ -951,7 +951,7 @@ function lsp.start_server(filename, project_directory)
                 doc_view.doc:set_selection(line1, col1, line2, col2)
               end
               if request.params.takeFocus then
-                system.raise_window()
+                system.raise_window(core.window)
               end
             end
 
@@ -2155,7 +2155,7 @@ core.add_background_thread(function()
 
     if servers_running then
       local wait = 0.01
-      if not system.window_has_focus() then
+      if not system.window_has_focus(core.window) then
         wait = 1
       elseif config.plugins.lsp.more_yielding then
         wait = 0
