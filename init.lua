@@ -2279,6 +2279,7 @@ function Doc:raw_insert(line, col, text, undo_stack, time)
   col = util.doc_utf8_to_utf16(self, line, col)
 
   if self.lsp_open then
+    if not lsp.symbols_tree:is_visible() then self.lsp_symbols = nil end
     add_change(self, text, line, col, line, col)
     lsp.update_document(self)
   elseif #lsp.get_active_servers(self.filename, true) > 0 then
@@ -2296,6 +2297,7 @@ function Doc:raw_remove(line1, col1, line2, col2, undo_stack, time)
   if not self.filename then return end
 
   if self.lsp_open then
+    if not lsp.symbols_tree:is_visible() then self.lsp_symbols = nil end
     add_change(self, "", line1, lcol1, line2, lcol2)
     lsp.update_document(self)
   elseif #lsp.get_active_servers(self.filename, true) > 0 then
@@ -2616,7 +2618,16 @@ command.add(nil, {
 
   ["lsp:toggle-symbols-tree"] = function()
     lsp.symbols_tree:set_auto_hide(false)
-    lsp.symbols_tree:toggle_visible(true, false, true)
+    lsp.symbols_tree:toggle_visible(true, false, true, {
+      on_complete = function(widget)
+        if widget:is_visible() then
+          widget:clear_current_doc()
+        else
+          widget.items = {{name = "loading", label = "Loading..."}}
+          widget.symbols_loaded = false
+        end
+      end
+    })
   end,
 
   ["lsp:enable-symbols-tree-auto-hide"] = function()
