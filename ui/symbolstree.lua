@@ -58,6 +58,7 @@ function SymbolsTree:new()
 
   self.current_docview = nil
   self.current_doc = nil
+  self.fetching_docs = {}
   self.last_change_id = nil
   self.auto_hide = false
   self.symbols_loaded = false
@@ -155,6 +156,15 @@ function SymbolsTree:get_item_icon(item, active, hovered)
   return character, font, color
 end
 
+function SymbolsTree:clear_current_doc(doc_check)
+  if doc_check then
+    local active_doc = self:get_active_doc()
+    if doc_check ~= active_doc then return end
+  end
+  self.current_doc = nil
+  self.last_change_id = nil
+end
+
 ---Enable or disable auto hiding the tree when no symbols are available.
 ---@param enable boolean
 function SymbolsTree:set_auto_hide(enable)
@@ -164,8 +174,7 @@ function SymbolsTree:set_auto_hide(enable)
     core.add_thread(function()
       while self.auto_hide do
         if not self:is_visible() then
-          self.current_doc = nil
-          self.last_change_id = nil
+          self:clear_current_doc()
           self:update_symbols()
           if self.symbols_loaded then
             self:show()
@@ -206,6 +215,7 @@ function SymbolsTree:update_symbols()
   local doc = self:get_active_doc()
 
   if not doc or not doc.lsp_open then
+    -- prevent removing symbols for every focused view (eg: TreeView, SearchUI, etc...)
     if
       doc
       or
@@ -215,20 +225,31 @@ function SymbolsTree:update_symbols()
         #core.get_views_referencing_doc(self.current_doc) == 0
       )
     then
-      self.items = {
-        {name = "no-symbols", label = "No Symbols Found"}
-      }
-      self.symbols_loaded = false
-
+      if #self.items < 1 or self.items[1].name ~= "no-symbols" then
+        self.items = {
+          {name = "no-symbols", label = "No Symbols Found"}
+        }
+        self.symbols_loaded = false
+        self:clear_current_doc()
+      end
       if self.auto_hide then
         self:hide()
       end
     end
     return
+  elseif self.fetching_docs[doc.abs_filename] then
+    return
   end
 
   if doc ~= self.current_doc or doc:get_change_id() ~= self.last_change_id then
-    if self.current_doc ~= doc then
+    if doc ~= self.current_doc and doc.lsp_symbols then
+      self.current_doc = doc
+      self.last_change_id = doc:get_change_id()
+      self:add_results(doc.lsp_symbols)
+      self.symbols_loaded = true
+      return
+    end
+    if self.current_doc ~= doc and not doc.lsp_symbols then
       self.items = {
         {name = "loading", label = "Loading..."}
       }
@@ -241,43 +262,58 @@ function SymbolsTree:update_symbols()
 
   if not Lsp then Lsp = require "plugins.lsp" end
 
-  local pushed = false
-  for _, name in pairs(Lsp.get_active_servers(doc.filename, true)) do
-    local server = Lsp.servers_running[name]
-    if server.capabilities.documentSymbolProvider then
-      pushed = server:push_request('textDocument/documentSymbol', {
-        overwrite = true,
-        params = {
-          textDocument = {
-            uri = util.touri(doc.abs_filename),
-          }
-        },
-        callback = function(server, response)
-          if response.result and response.result and #response.result > 0 then
-            self:add_results(response.result)
-          else
-            self.items = {
-              {name = "no-symbols", label = "No Symbols Found"}
-            }
-            self.symbols_loaded = false
-          end
-        end,
-        on_expired = function()
-          -- retry if request expired without response
-          self.current_doc = nil
-        end
-      })
-      break
+  self.fetching_docs[doc.abs_filename] = true
+
+  local last_change_id = self.last_change_id
+  core.add_thread(function()
+    coroutine.yield(1)
+    while last_change_id ~= doc:get_change_id() do
+      last_change_id = doc:get_change_id()
+      coroutine.yield(1)
     end
-  end
-  if not pushed then
-    self.current_doc = nil
-  end
+    local pushed = false
+    for _, name in pairs(Lsp.get_active_servers(doc.filename, true)) do
+      local server = Lsp.servers_running[name]
+      if server.capabilities.documentSymbolProvider then
+        pushed = server:push_request('textDocument/documentSymbol', {
+          overwrite = true,
+          params = {
+            textDocument = {
+              uri = util.touri(doc.abs_filename),
+            }
+          },
+          callback = function(server, response)
+            local active_doc = self:get_active_doc()
+            if response.result and response.result and #response.result > 0 then
+              if doc == active_doc then self:add_results(response.result) end
+              doc.lsp_symbols = response.result
+            elseif doc == active_doc then
+              self.items = {
+                {name = "no-symbols", label = "No Symbols Found"}
+              }
+              self.symbols_loaded = false
+            end
+            self.fetching_docs[doc.abs_filename] = nil
+          end,
+          on_expired = function()
+            -- retry if request expired without response
+            self:clear_current_doc(doc)
+            self.fetching_docs[doc.abs_filename] = nil
+          end
+        })
+        break
+      end
+    end
+    if not pushed then
+      self:clear_current_doc(doc)
+      self.fetching_docs[doc.abs_filename] = nil
+    end
+  end)
 end
 
 function SymbolsTree:update()
   SymbolsTree.super.update(self)
-  self:update_symbols()
+  if self:is_visible() then self:update_symbols() end
 end
 
 --
