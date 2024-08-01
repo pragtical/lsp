@@ -521,6 +521,18 @@ lspconfig.lemminx = add_lsp {
   verbose = false
 }
 
+---# Markdown
+--- __Status__: Works
+--- __Site__: https://github.com/artempyanykh/marksman
+--- __Installation__: `pacman -S marksman`
+lspconfig.marksman = add_lsp {
+  name = "marksman",
+  language = "markdown",
+  file_patterns = { "%.md$", "%.markdown$" },
+  command = { "marksman" },
+  verbose = false
+}
+
 ---# nil
 --- __Status__:       Works
 --- __Site__:         https://github.com/oxalica/nil
