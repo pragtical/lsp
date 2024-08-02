@@ -428,7 +428,6 @@ end
 ---@return string
 function util.strip_markdown(text)
   local clean_text = ""
-  local prev_line = ""
   for match in (text.."\n"):gmatch("(.-)".."\n") do
     match = match .. "\n"
 
@@ -461,11 +460,11 @@ function util.strip_markdown(text)
       :gsub("%-%-(.-)%-%-", "%1")
       -- italic
       :gsub("%*(.-)%*", "%1")
-      :gsub("%s_(.-)_%s", "%1")
+      :gsub("(%s)_(.-)_(%s)", "%1%2%3")
       :gsub("\\_(.-)\\_", "_%1_")
       :gsub("^_(.-)_", "%1")
       -- code
-      :gsub("^%s*```(%w+)%s*\n", "")
+      :gsub("^%s*```%a[%w%-]*%s*\n", "")
       :gsub("^%s*```%s*\n", "")
       :gsub("``(.-)``", "%1")
       :gsub("`(.-)`", "%1")
@@ -480,35 +479,13 @@ function util.strip_markdown(text)
       -- Images
       :gsub("!%[(.-)%]%((.-)%)", "")
       -- links
-      :gsub("%s<(.-)>%s", "%1")
+      :gsub("(%s)<(%w+:/+[^>]*)>(%s)", "%1%2%3")
       :gsub("%[(.-)%]%s*%[(.-)%]", "%1")
       :gsub("%[(.-)%]%((.-)%)", "%1: %2")
       -- remove escaped punctuations
       :gsub("\\(%p)", "%1")
 
-    -- if paragraph put in same line
-    local is_paragraph = false
-
-    local prev_spaces = prev_line:match("^%g+")
-    local prev_endings = prev_line:match("[ \t\r\n]+$")
-    local new_spaces = new_line:match("^%g+")
-
-    if prev_spaces and new_spaces then
-      local new_lines = prev_endings ~= nil
-        and prev_endings:gsub("[ \t\r]+", "") or ""
-
-      if #new_lines == 1 then
-        is_paragraph = true
-        clean_text = clean_text:gsub("[%s\n]+$", "")
-          .. " " .. new_line:gsub("^%s+", "")
-      end
-    end
-
-    if not is_paragraph then
-      clean_text = clean_text .. new_line
-    end
-
-    prev_line = new_line
+    clean_text = clean_text .. new_line
   end
   return clean_text
 end
