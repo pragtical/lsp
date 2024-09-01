@@ -484,6 +484,8 @@ function util.strip_markdown(text)
       :gsub("%[(.-)%]%((.-)%)", "%1: %2")
       -- remove escaped punctuations
       :gsub("\\(%p)", "%1")
+      -- convert less than and more than tags
+      :gsub("&lt;", "<"):gsub("&gt;", ">")
 
     clean_text = clean_text .. new_line
   end
