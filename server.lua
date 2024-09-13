@@ -825,12 +825,14 @@ function Server:send_data(data)
   local failures, data_len = 0, #data
   local written, errmsg = self.proc:write(data)
   local total_written = written or 0
+  local co, is_main = coroutine.running()
+  local co_running = (not is_main and co) and true or false
 
   while total_written < data_len and not errmsg do
     written, errmsg = self.proc:write(data:sub(total_written + 1))
     total_written = total_written + (written or 0)
 
-    if (not written or written <= 0) and not errmsg and coroutine.running() then
+    if (not written or written <= 0) and not errmsg and co_running then
       -- with each consecutive fail the yield timeout is increased by 5ms
       coroutine.yield((failures * 5) / 1000)
 
@@ -1313,7 +1315,9 @@ end
 ---@return string|nil
 function Server:read_errors(timeout)
   timeout = timeout or Server.DEFAULT_TIMEOUT
-  local inside_coroutine = self.yield_on_reads and coroutine.running() or false
+  local co, is_main = coroutine.running()
+  local co_running = (not is_main and co) and true or false
+  local inside_coroutine = self.yield_on_reads and co_running or false
 
   local max_time = os.time() + timeout
   if timeout == 0 then max_time = max_time + 1 end
