@@ -2209,11 +2209,8 @@ function Doc:on_close()
 
   -- skip new files
   if not self.filename then return end
-  core.add_background_thread(function()
-    if #core.get_views_referencing_doc(self) == 0 then
-      lsp.close_document(self)
-    end
-  end)
+
+  lsp.close_document(self)
 
   if not config.plugins.lsp.stop_unneeded_servers then
     return
