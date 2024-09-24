@@ -615,6 +615,18 @@ lspconfig.perlnavigator = add_lsp {
   verbose = false
 }
 
+---# Phpactor
+--- __Status__: Works
+--- __Site__: https://github.com/phpactor/phpactor
+--- __Installation__: See official website for instructions
+lspconfig.phpactor = add_lsp {
+  name = "phpactor",
+  language = "php",
+  file_patterns = { "%.php$" },
+  command = { "phpactor", "language-server" },
+  verbose = false
+}
+
 ---# psalm-language-server
 --- __Status__: Works but has issues
 --- __Site__: https://github.com/vimeo/psalm
