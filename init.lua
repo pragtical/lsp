@@ -110,6 +110,7 @@ config.plugins.lsp = common.merge({
   more_yielding = false,
   autostart_server = true,
   symbolstree_visibility = "auto",
+  symbolstree_width = 300 * SCALE,
   -- The config specification used by the settings gui
   config_spec = {
     name = "Language Server Protocol",
@@ -239,6 +240,22 @@ config.plugins.lsp = common.merge({
             lsp.symbols_tree:hide()
           end
         end
+      end
+    },
+    {
+      label = "Symbols Tree Width",
+      description = "Default width for the symbols tree pane.",
+      path = "symbolstree_width",
+      type = "number",
+      default = 300 * SCALE,
+      get_value = function(value)
+        return value / SCALE
+      end,
+      set_value = function(value)
+        return value * SCALE
+      end,
+      on_apply = function(value)
+        lsp.symbols_tree:set_size(value)
       end
     }
   }
@@ -2471,7 +2488,7 @@ end
 --
 lsp.symbols_tree = SymbolsTree()
 lsp.symbols_tree:hide()
-lsp.symbols_tree:set_size(300 * SCALE, 100)
+lsp.symbols_tree:set_size(config.plugins.lsp.symbolstree_width, 100)
 if config.plugins.lsp.symbolstree_visibility == "auto" then
   lsp.symbols_tree:set_auto_hide(true)
 elseif config.plugins.lsp.symbolstree_visibility == "show" then
