@@ -533,6 +533,18 @@ lspconfig.marksman = add_lsp {
   verbose = false
 }
 
+---# MesonLSP
+--- __Status__: Works
+--- __Site__: https://github.com/JCWasmx86/mesonlsp
+--- __Installation__: `pacman -S mesonlsp`
+lspconfig.mesonlsp = add_lsp {
+  name = "MesonLSP",
+  language = "meson",
+  file_patterns = { "meson%.build$", "meson%.options$", "meson_options%.txt$" },
+  command = { 'mesonlsp', '--lsp' },
+  verbose = false
+}
+
 ---# nil
 --- __Status__:       Works
 --- __Site__:         https://github.com/oxalica/nil
@@ -873,18 +885,6 @@ lspconfig.sveltels = add_lsp {
   language = "svelte",
   file_patterns = { "%.svelte$" },
   command = { 'svelteserver', '--stdio' },
-  verbose = false
-}
-
----# Swift-MesonLSP
---- __Status__: Works
---- __Site__: https://github.com/JCWasmx86/Swift-MesonLSP
---- __Installation__: `yay -S swift-mesonlsp`
-lspconfig.swift_mesonlsp = add_lsp {
-  name = "Swift-MesonLSP",
-  language = "meson",
-  file_patterns = { "meson%.build$", "meson%.options$", "meson_options%.txt$" },
-  command = { 'Swift-MesonLSP', '--lsp' },
   verbose = false
 }
 
