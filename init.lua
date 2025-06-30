@@ -94,6 +94,8 @@ local lsp = {}
 ---@field more_yielding boolean
 ---Determines the default visibility of the symbols tree.
 ---@field symbolstree_visibility "show" | "hide" | "auto"
+---Request a document format after a save.
+---@field request_format_on_save bool
 config.plugins.lsp = common.merge({
   mouse_hover = true,
   mouse_hover_delay = 300,
@@ -111,6 +113,7 @@ config.plugins.lsp = common.merge({
   autostart_server = true,
   symbolstree_visibility = "auto",
   symbolstree_width = 300 * SCALE,
+  request_format_on_save = false,
   -- The config specification used by the settings gui
   config_spec = {
     name = "Language Server Protocol",
@@ -257,7 +260,14 @@ config.plugins.lsp = common.merge({
       on_apply = function(value)
         lsp.symbols_tree:set_size(value)
       end
-    }
+    },
+    {
+      label = "Request Document Format on Save",
+      description = "Request a document format after save. Due to the nature of LSP this will produce a second document save after receiving the formatted code.",
+      path = "request_format_on_save",
+      type = "TOGGLE",
+      default = false
+    },
   }
 }, config.plugins.lsp)
 
@@ -1901,7 +1911,9 @@ function lsp.request_document_symbols(doc)
 end
 
 --- Format current document if supported by one of the running lsp servers.
-function lsp.request_document_format(doc)
+---@param doc core.doc
+---@param on_save boolean Was triggered from Doc:save()
+function lsp.request_document_format(doc, on_save)
   if not doc.lsp_open then return end
 
   local servers_found = false
@@ -1925,6 +1937,7 @@ function lsp.request_document_format(doc)
       if not indent_confirmed then
         indent_type, indent_size = config.tab_type, config.indent_size
       end
+      if on_save then doc.lsp_formatting = true end
       server:push_request('textDocument/formatting', {
         params = {
           textDocument = {
@@ -1951,9 +1964,13 @@ function lsp.request_document_format(doc)
               apply_edit(server, doc, response.result[i], false, false)
             end
             log(server, "Formatted document")
+            if on_save then
+              doc:save(doc.filename, doc.abs_filename)
+            end
           else
             log(server, "Formatting not required")
           end
+          if on_save then doc.lsp_formatting = nil end
         end
       })
       format_executed = true
@@ -2211,14 +2228,13 @@ function Doc:save(...)
   if old_filename ~= self.filename then
     -- seems to be a new document so we send open notification
     diagnostics.lintplus_init_doc(self)
-    core.add_background_thread(function()
-      lsp.open_document(self)
-    end)
+    lsp.open_document(self)
   else
-    core.add_background_thread(function()
-      lsp.update_document(self)
-      lsp.save_document(self)
-    end)
+    lsp.update_document(self)
+    lsp.save_document(self)
+    if config.plugins.lsp.request_format_on_save and not self.lsp_formatting then
+      lsp.request_document_format(self, true)
+    end
   end
   return res
 end
