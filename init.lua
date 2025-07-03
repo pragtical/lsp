@@ -243,6 +243,7 @@ config.plugins.lsp = common.merge({
             lsp.symbols_tree:hide()
           end
         end
+        return value
       end
     },
     {
