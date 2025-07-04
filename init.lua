@@ -232,7 +232,7 @@ config.plugins.lsp = common.merge({
         { "Show", "show" },
         { "Hide", "hide" },
       },
-      set_value = function(value)
+      on_apply = function(value)
         if value == "auto" then
           lsp.symbols_tree:set_auto_hide(true)
         else
@@ -243,7 +243,6 @@ config.plugins.lsp = common.merge({
             lsp.symbols_tree:hide()
           end
         end
-        return value
       end
     },
     {
@@ -2511,8 +2510,10 @@ lsp.symbols_tree:set_size(config.plugins.lsp.symbolstree_width, 100)
 if config.plugins.lsp.symbolstree_visibility == "auto" then
   lsp.symbols_tree:set_auto_hide(true)
 elseif config.plugins.lsp.symbolstree_visibility == "show" then
+  lsp.symbols_tree:set_auto_hide(false)
   lsp.symbols_tree:show()
 else
+  lsp.symbols_tree:set_auto_hide(false)
   lsp.symbols_tree:hide()
 end
 
