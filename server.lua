@@ -908,7 +908,7 @@ function Server:process_raw()
 
       self.write_fails = 0
 
-      coroutine.yield()
+      coroutine.yield(0.001)
     end
 
     if self.verbose then

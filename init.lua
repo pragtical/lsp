@@ -2159,7 +2159,7 @@ core.add_background_thread(function()
           -- or server:process_notifications()
           server:process_errors(config.plugins.lsp.log_server_stderr)
           server:process_responses()
-          coroutine.yield()
+          coroutine.yield(0.001)
           coroutine.resume(raw_send)
         end
       end
@@ -2185,7 +2185,7 @@ core.add_background_thread(function()
     end
 
     if servers_running then
-      local wait = 0.01
+      local wait = 0.08
       if not system.window_has_focus(core.window) then
         wait = 1
       elseif config.plugins.lsp.more_yielding then
