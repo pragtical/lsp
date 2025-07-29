@@ -892,7 +892,7 @@ function lsp.start_server(filename, project_directory)
             "[LSP]: %s was shutdown, revise your configuration",
             sname
           )
-          local last_shutdown = lsp.servers_running[sname].last_shutdown or 0
+          local last_shutdown = lsp.servers_running[sname] and lsp.servers_running[sname].last_shutdown or 0
           lsp.servers_running = util.table_remove_key(
             lsp.servers_running,
             sname
