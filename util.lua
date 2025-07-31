@@ -202,21 +202,25 @@ end
 ---Opens the given location on a external application.
 ---@param location string
 function util.open_external(location)
-  local filelauncher = ""
-  if PLATFORM == "Windows" then
-    filelauncher = "start"
-  elseif PLATFORM == "Mac OS X" then
-    filelauncher = "open"
-  else
-    filelauncher = "xdg-open"
-  end
+  if common.open_in_system then
+    common.open_in_system(location)
+  else -- backward compatibility, should remomve entire function later
+    local filelauncher = ""
+    if PLATFORM == "Windows" then
+      filelauncher = 'start ""'
+    elseif PLATFORM == "Mac OS X" then
+      filelauncher = "open"
+    else
+      filelauncher = "xdg-open"
+    end
 
-  -- non-Windows platforms need the text quoted (%q)
-  if PLATFORM ~= "Windows" then
-    location = string.format("%q", location)
-  end
+    -- non-Windows platforms need the text quoted (%q)
+    if PLATFORM ~= "Windows" then
+      location = string.format("%q", location)
+    end
 
-  system.exec(filelauncher .. " " .. location)
+    system.exec(filelauncher .. " " .. location)
+  end
 end
 
 ---Prettify json output and logs it if config.lsp.log_file is set.
