@@ -2187,7 +2187,7 @@ core.add_background_thread(function()
     end
 
     if servers_running then
-      local wait = 0.08
+      local wait = 0.04
       if not system.window_has_focus(core.window) then
         wait = 1
       elseif config.plugins.lsp.more_yielding then
