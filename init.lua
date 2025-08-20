@@ -92,6 +92,8 @@ local lsp = {}
 ---Yield when reading from LSP which may give you better UI responsiveness
 ---when receiving large responses, but will affect LSP performance.
 ---@field more_yielding boolean
+---The amount of times per second to check for new server data.
+---@field checks_per_second number
 ---Determines the default visibility of the symbols tree.
 ---@field symbolstree_visibility "show" | "hide" | "auto"
 ---Request a document format after a save.
@@ -110,6 +112,7 @@ config.plugins.lsp = common.merge({
   log_server_stderr = false,
   force_verbosity_off = false,
   more_yielding = false,
+  checks_per_second = 25,
   autostart_server = true,
   symbolstree_visibility = "auto",
   symbolstree_width = 300 * SCALE,
@@ -220,6 +223,16 @@ config.plugins.lsp = common.merge({
       path = "more_yielding",
       type = "TOGGLE",
       default = false
+    },
+    {
+      label = "Checks Per Second",
+      description = "The amount of times per second to check for new server data. Higher is faster but consumes more CPU.",
+      path = "checks_per_second",
+      type = "NUMBER",
+      default = 25,
+      min = 10,
+      max = 100,
+      step = 1
     },
     {
       label = "Symbols Tree Visibility",
@@ -2187,7 +2200,7 @@ core.add_background_thread(function()
     end
 
     if servers_running then
-      local wait = 0.04
+      local wait = 1 / config.plugins.lsp.checks_per_second
       if not system.window_has_focus(core.window) then
         wait = 1
       elseif config.plugins.lsp.more_yielding then
