@@ -34,7 +34,10 @@ function Timer:start()
       this:reset()
       while (this.last_run + this.interval) > system.get_time() do
         if not this.started then return end
-        coroutine.yield()
+        coroutine.yield(math.max(
+          0.001,
+          ((this.last_run + this.interval) - system.get_time()) / 1.2
+        ))
       end
       if not this.started then return end
       this:on_timer()
