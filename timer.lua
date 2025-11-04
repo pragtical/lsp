@@ -32,12 +32,11 @@ function Timer:start()
   core.add_thread(function()
     while true do
       this:reset()
-      while (this.last_run + this.interval) > system.get_time() do
+      local now = system.get_time()
+      while (this.last_run + this.interval) > now do
         if not this.started then return end
-        coroutine.yield(math.max(
-          0.001,
-          ((this.last_run + this.interval) - system.get_time()) / 1.2
-        ))
+        coroutine.yield((this.last_run + this.interval) - now)
+        now = system.get_time()
       end
       if not this.started then return end
       this:on_timer()
