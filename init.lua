@@ -2782,7 +2782,7 @@ core.add_thread(function()
         lsp.hover_position.triggered = false
         lsp.hover_position.doc = nil
       end
-      contextmenu_show(self, ...)
+      return contextmenu_show(self, ...)
     end
   end
 end)
