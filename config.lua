@@ -931,6 +931,19 @@ lspconfig.tailwindcss = add_lsp {
   verbose = false
 }
 
+---# Teal, a typed dialect of Lua
+--- __Status: Works
+--- __Site__: https://github.com/teal-language/teal-language-server/
+--- __Instalation__: luarocks install teal-language-server
+lspconfig.teal_language_server = lspconfig.add_lsp {
+  name = "teal-language-server",
+  language = "teal",
+  file_patterns = { "%.tl$" },
+  command = { "teal-language-server" },
+  env = { TL_PATH="?.tl;src/?.tl" },
+  verbose = false
+}
+
 ---# Typst - tinymist
 --- __Status: Works
 --- __Site__: https://github.com/Myriad-Dreamin/tinymist
