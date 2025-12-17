@@ -745,6 +745,18 @@ lspconfig.ruff = add_lsp {
   verbose = false
 }
 
+--# ty
+--- __Status__: Works
+--- __Site__: https://github.com/astral-sh/ty
+--- __Installation__: `pip install ty` or `uv tool install ty`
+lspconfig.ty = add_lsp {
+  name = "ty",
+  language = "python",
+  file_patterns = { "%.py$" },
+  command = { "ty", "server" },
+  verbose = false
+}
+
 ---# quick-lint-js
 --- __Status__: Works
 --- __Site__: https://github.com/quick-lint/quick-lint-js
