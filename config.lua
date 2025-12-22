@@ -552,6 +552,18 @@ lspconfig.mesonlsp = add_lsp {
   verbose = false
 }
 
+---# muon
+--- __Status__: Works
+--- __Site__: https://github.com/muon-build/muon
+--- __Installation__: https://github.com/muon-build/muon?tab=readme-ov-file#install
+lspconfig.muon = add_lsp {
+  name = "muon",
+  language = "meson",
+  file_patterns = { "meson%.build$", "meson%.options$", "meson_options%.txt$" },
+  command = { "muon", "analyze", "lsp" },
+  verbose = false
+}
+
 ---# nil
 --- __Status__:       Works
 --- __Site__:         https://github.com/oxalica/nil
