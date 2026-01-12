@@ -979,7 +979,6 @@ lspconfig.teal_language_server = add_lsp {
   language = "teal",
   file_patterns = { "%.tl$" },
   command = { "teal-language-server" },
-  env = { TL_PATH="?.tl;src/?.tl" },
   verbose = false
 }
 
