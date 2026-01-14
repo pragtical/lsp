@@ -2091,8 +2091,9 @@ end
 function lsp.goto_symbol(doc, line, col, implementation)
   if not doc.lsp_open then return end
 
+  local server
   for _, name in pairs(lsp.get_active_servers(doc.filename, true)) do
-    local server = lsp.servers_running[name]
+    server = lsp.servers_running[name]
 
     local method = ""
     if not implementation then
@@ -2102,53 +2103,62 @@ function lsp.goto_symbol(doc, line, col, implementation)
         method = method .. "declaration"
       elseif server.capabilities.typeDefinitionProvider then
         method = method .. "typeDefinition"
-      else
-        log(server, "Goto definition not supported")
-        return
       end
     else
       if server.capabilities.implementationProvider then
         method = method .. "implementation"
-      else
-        log(server, "Goto implementation not supported")
-        return
       end
     end
 
-    -- Send document updates first
-    lsp.update_document(doc)
+    if method ~= "" then
+      -- Send document updates first
+      lsp.update_document(doc)
 
-    server:push_request("textDocument/" .. method, {
-      params = get_buffer_position_params(doc, line, col),
-      callback = function(server, response)
-        local location = response.result
+      server:push_request("textDocument/" .. method, {
+        params = get_buffer_position_params(doc, line, col),
+        callback = function(server, response)
+          local location = response.result
 
-        if not location or not location.uri and #location == 0 then
-          core.log("[LSP] No %s found.", method)
-          return
-        end
-
-        if not location.uri and #location > 1 then
-          listbox.clear()
-          for _, loc in pairs(location) do
-            local preview, position = get_location_preview(loc)
-            listbox.append {
-              text = preview,
-              info = position,
-              location = loc
-            }
+          if not location or not location.uri and #location == 0 then
+            core.log("[LSP] No %s found.", method)
+            return
           end
-          listbox.show_list(nil, function(doc, item)
-            lsp.goto_location(item.location)
-          end)
-        else
-          if not location.uri then
-            location = location[1]
+
+          if not location.uri and #location > 1 then
+            listbox.clear()
+            for _, loc in pairs(location) do
+              local preview, position = get_location_preview(loc)
+              listbox.append {
+                text = preview,
+                info = position,
+                location = loc
+              }
+            end
+            listbox.show_list(nil, function(doc, item)
+              lsp.goto_location(item.location)
+            end)
+          else
+            if not location.uri then
+              location = location[1]
+            end
+            lsp.goto_location(location)
           end
-          lsp.goto_location(location)
         end
-      end
-    })
+      })
+
+      -- a provider was found, exit the loop
+      return
+    end
+  end
+
+  if server then
+    log(
+      server,
+      "Goto "
+      .. (implementation and "implementation" or "definition")
+      .. " not supported"
+    )
+    return
   end
 end
 
