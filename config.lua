@@ -9,9 +9,10 @@
 -- https://github.com/mattn/vim-lsp-settings/tree/master/settings
 --
 
+local core = require "core"
 local lsp = require "plugins.lsp"
-local util = require "plugins.lsp.util"
 local config = require "core.config"
+local util = require "plugins.lsp.util"
 local snippets = pcall(require, "plugins.snippets") and config.plugins.lsp.snippets
 
 ---Options that can be passed to a LSP server to overwrite the defaults.
@@ -915,7 +916,14 @@ lspconfig.sumneko_lua = add_lsp {
         viewString = true,
         viewStringMax = 1000
       },
-      runtime = {
+      runtime = LUAJIT and {
+        version = 'LuaJIT',
+        path = {
+          "?.lua",
+          "?/init.lua",
+          "?/?.lua"
+        }
+      } or {
         version = 'Lua 5.4',
         path = {
           "?.lua",
@@ -929,11 +937,24 @@ lspconfig.sumneko_lua = add_lsp {
         enable = true
       },
       workspace = {
-        library = {
+        library = system.get_file_info(
+          core.root_project().path .. PATHSEP .. "data/core/init.lua"
+        ) and {
+          "data",
+          "docs/api",
+          "subprojects",
+          USERDIR
+        } or {
           DATADIR,
           USERDIR
         },
-        maxPreload = 2000,
+        ignoreDir = system.get_file_info(
+          core.root_project().path .. PATHSEP .. "data/core/init.lua"
+        ) and {
+          ".run",
+        } or {
+        },
+        maxPreload = 5000,
         preloadFileSize = 1000
       },
       telemetry = {
