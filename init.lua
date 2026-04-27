@@ -1117,6 +1117,29 @@ function lsp.start_servers()
   end
 end
 
+---Returns the hovered doc and the hovered position.
+---Returns nil if no doc with an LSP activated is under the provided coordinates.
+---@param x number
+---@param y number
+---@return core.doc|nil doc
+---@return integer|nil line
+---@return integer|nil col
+function lsp.get_hovered_location(x, y)
+  local n = core.root_view.root_node:get_child_overlapping_point(x, y)
+  if not n then return end
+  local av = n.active_view
+  if not av:extends(DocView) then return end
+  if av and av.doc.lsp_open then
+    ---@type core.doc
+    local doc = av.doc
+    local line, col = av:resolve_screen_position(x, y)
+    local last_x = av:get_col_x_offset(line, #av.doc.lines[line])
+    local lx, ly = av:get_line_screen_position(line)
+    if x > last_x + lx or y > ly + av:get_line_height() then return end
+    return doc, line, col
+  end
+end
+
 ---Send notification to applicable LSP servers that a document was opened
 ---@param doc core.doc
 function lsp.open_document(doc)
@@ -2575,6 +2598,24 @@ command.add(
     end
   end,
 
+  ["lsp:goto-definition-under-cursor"] = function()
+    local doc, line, col = lsp.get_hovered_location(
+      core.root_view.mouse.x, core.root_view.mouse.y
+    )
+    if doc then
+      lsp.goto_symbol(doc, line, col)
+    end
+  end,
+
+  ["lsp:goto-implementation-under-cursor"] = function()
+    local doc, line, col = lsp.get_hovered_location(
+      core.root_view.mouse.x, core.root_view.mouse.y
+    )
+    if doc then
+      lsp.goto_symbol(doc, line, col, true)
+    end
+  end,
+
   ["lsp:show-signature"] = function(doc)
     local line1, col1, line2, col2 = doc:get_selection()
     if line1 == line2 and col1 == col2 then
@@ -2717,6 +2758,8 @@ keymap.add {
   ["alt+shift+a"]       = "lsp:show-symbol-info-in-tab",
   ["alt+d"]             = "lsp:goto-definition",
   ["alt+shift+d"]       = "lsp:goto-implementation",
+  ["alt+shift+1lclick"] = "lsp:goto-definition-under-cursor",
+  ["ctrl+alt+shift+1lclick"] = "lsp:goto-implementation-under-cursor",
   ["alt+s"]             = "lsp:view-document-symbols",
   ["alt+shift+s"]       = "lsp:find-workspace-symbol",
   ["alt+f"]             = "lsp:find-references",
