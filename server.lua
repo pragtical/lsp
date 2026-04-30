@@ -67,6 +67,9 @@ local Object = require "core.object"
 ---@field public custom_capabilities table
 ---@field public yield_on_reads boolean
 ---@field public running boolean
+---@field public shutdown_reason string | nil
+---@field public restarts_count integer
+---@field public max_restarts integer
 local Server = Object:extend()
 
 ---LSP Server constructor options
@@ -248,6 +251,9 @@ function Server:new(options)
   self.verbose = options.verbose or false
   self.last_restart = system.get_time()
   self.initialized = false
+  self.shutdown_reason = nil
+  self.restarts_count = 0
+  self.max_restarts = -1
   self.hitrate_list = {}
   self.requests_per_second = options.requests_per_second or 16
 
@@ -643,11 +649,24 @@ function Server:process_notifications()
   end
 end
 
----Sends one of the queued client requests.
+---Sends one of the queued client requests and expires timed out ones.
 function Server:process_requests()
   local remove_request = nil
   for index, request in ipairs(self.request_list) do
-    if request.timestamp < os.time() then
+    if request.times_sent > 0 and request.timestamp < os.time() then
+      if request.id ~= 1 then -- Initialize request may take some time
+        remove_request = index
+      else
+        self.shutdown_reason = "could not initialize"
+        self.max_restarts = 1
+        self.fatal_error = true
+        self:shutdown_if_needed()
+        return nil
+      end
+      break
+    end
+
+    if request.times_sent == 0 then
       -- only process when initialized or the initialize request
       -- which should be the first one.
       if not self.initialized and request.id ~= 1 then
@@ -683,23 +702,10 @@ function Server:process_requests()
       end
 
       if written then
-        local time = request.timeout or 1
-        request.timestamp = os.time() + time
-
+        request.timestamp = os.time() + (request.timeout or 1)
+        request.times_sent = 1
         self.write_fails = 0
-
-        -- if request has been sent more than 2 times remove them
-        request.times_sent = request.times_sent + 1
-        if
-          request.times_sent > 1
-          and
-          request.id ~= 1 -- Initialize request may take some time
-        then
-          remove_request = index
-          break
-        else
-          return request
-        end
+        return request
       else
         request.timestamp = os.time() + 1
         self:shutdown_if_needed()

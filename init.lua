@@ -901,19 +901,34 @@ function lsp.start_server(filename, project_directory)
 
         function client:on_shutdown()
           local sname = self.name
-          core.log(
-            "[LSP]: %s was shutdown, revise your configuration",
-            sname
-          )
+          local restarts_count = self.restarts_count or 0
+          local max_restarts = self.max_restarts or -1
+          if self.shutdown_reason then
+            core.log("[LSP]: %s was shutdown: %s", sname, self.shutdown_reason)
+          else
+            core.log(
+              "[LSP]: %s was shutdown, revise your configuration",
+              sname
+            )
+          end
           local last_shutdown = lsp.servers_running[sname] and lsp.servers_running[sname].last_shutdown or 0
           lsp.servers_running = util.table_remove_key(
             lsp.servers_running,
             sname
           )
+          if max_restarts > -1 and restarts_count >= max_restarts then
+            core.log(
+              "[LSP]: %s reached the maximum amount of automatic restarts",
+              sname
+            )
+            return
+          end
           if system.get_time() - last_shutdown >= 5 then
             lsp.start_servers()
             if lsp.servers_running[sname] then
               lsp.servers_running[sname].last_shutdown = system.get_time()
+              lsp.servers_running[sname].restarts_count = restarts_count + 1
+              lsp.servers_running[sname].max_restarts = max_restarts
               core.log(
                 "[LSP]: %s automatically restarted",
                 sname
@@ -1058,6 +1073,8 @@ function lsp.start_server(filename, project_directory)
 
         -- Send settings table after initialization if available.
         client:add_event_listener("initialized", function(server)
+          server.restarts_count = 0
+          server.max_restarts = -1
           if config.plugins.lsp.force_verbosity_off then
             core.log_quiet("["..server.name.."] " .. "Initialized")
           else
