@@ -11,9 +11,10 @@ local keymap = require "core.keymap"
 local style = require "core.style"
 local util = require "plugins.lsp.util"
 local DocView = require "core.docview"
-local CommandView = require "core.commandview"
-local SearchUI = require "plugins.search_ui"
+local Widget = require "widget"
+local TextBox = require "widget.textbox"
 local TreeList = require "widget.treelist"
+local SelectBox = require "widget.selectbox"
 
 local Lsp = nil
 
@@ -46,15 +47,21 @@ local SYMBOLS_KIND_ICONS = {
   { name = "TypeParameter", color = "literal",  icon = '' }  -- U+EA92
 }
 
----@class lsp.ui.symbolstree : widget.treelist
+---@class lsp.ui.symbolstree : widget
 ---@field current_doc? core.doc
 ---@field last_change_id? integer
+---@field kinds table<string, integer>
+---@field filter_kind integer
+---@field filter_text string
+---@field tree widget.treelist
+---@field textbox widget.textbox
+---@field selectbox widget.selectbox
 ---@overload fun():lsp.ui.symbolstree
-local SymbolsTree = TreeList:extend()
+local SymbolsTree = Widget:extend()
 
 ---Constructor
 function SymbolsTree:new()
-  SymbolsTree.super.new(self)
+  SymbolsTree.super.new(self, nil, false)
 
   self.current_docview = nil
   self.current_doc = nil
@@ -64,18 +71,74 @@ function SymbolsTree:new()
   self.symbols_loaded = false
 
   self.name = "Document Symbols"
-  self.defer_draw = false
+  self.kinds = {}
+  self.filter_kind = 0
+  self.filter_text = ""
 
   self.border.width = 0
   self:set_size(200)
   self:show()
 
-  self:set_icon_font(
+  local that = self
+
+  self.tree = TreeList(self)
+  self.tree.border.width = 0
+  self.tree:set_icon_font(
     renderer.font.load(
       USERDIR .. "/plugins/lsp/fonts/symbols.ttf",
       style.icon_font:get_size()
     )
   )
+
+  ---@param item widget.treelist.item
+  ---@param active boolean
+  ---@param hovered boolean
+  function self.tree:get_item_icon(item, active, hovered)
+    local character = item.icon
+    local font = self.icon_font or style.icon_font
+    local color = item.data and
+      style.syntax[SYMBOLS_KIND_ICONS[item.data.type].color]
+      or
+      style.text
+    if active or hovered then
+      color = common.lighten_color(color, 40)
+    end
+    return character, font, color
+  end
+
+  function self.tree:on_item_click(item, button, x, y, clicks)
+    if clicks == 1 then
+      that:goto_symbol(item)
+    end
+  end
+
+  self.textbox = TextBox(self, "", "filter")
+  function self.textbox:on_change(value)
+    that:set_name_filter(value)
+  end
+
+  self.selectbox = SelectBox(self, "Types")
+  function self.selectbox:on_selected(item_idx, item_data)
+    that:set_filter(item_data or 0)
+  end
+end
+
+---@param self lsp.ui.symbolstree
+local function apply_filter(self)
+  local filter_text = self.filter_text
+  local filter_kind = self.filter_kind
+  if filter_kind == 0 and filter_text == "" then
+    self.tree:filter()
+    return
+  end
+
+  self.tree:filter(function(_, item)
+    local kind_matches = filter_kind == 0
+      or (item.data and item.data.type == filter_kind)
+    local text_matches = filter_text == ""
+      or system.fuzzy_match(item.label or item.name, filter_text, false)
+    return kind_matches and text_matches
+  end)
 end
 
 ---Get currently selected view if it is a docview with a valid file.
@@ -89,15 +152,64 @@ function SymbolsTree:get_active_doc()
   return nil, av
 end
 
----Set the tree items with results returned from a textDocument/documentSymbol
+---@param results? lsp.protocol.DocumentSymbol[] | lsp.protocol.SymbolInformation[]
+local function reset_selectbox(self, results)
+  self.selectbox.list:clear()
+  self.selectbox:set_label("Types")
+  if results and #results > 0 then
+    self.selectbox:add_option("All", 0)
+  end
+  self.selectbox:set_selected(0)
+end
+
+---@param self lsp.ui.symbolstree
+local function sync_selectbox_selection(self)
+  local selected = 0
+  for idx = 2, #self.selectbox.list.rows do
+    if self.selectbox.list:get_row_data(idx) == self.filter_kind then
+      selected = idx - 1
+      break
+    end
+  end
+  if self.filter_kind ~= 0 and selected == 0 then
+    self.filter_kind = 0
+  end
+  self.selectbox:set_selected(selected)
+end
+
+---@param self lsp.ui.symbolstree
+local function add_select_kinds(self)
+  if #self.tree.items == 0 then
+    reset_selectbox(self)
+    return
+  end
+
+  reset_selectbox(self, self.tree.items)
+  local kinds = {}
+  for kind in pairs(self.kinds) do
+    table.insert(kinds, kind)
+  end
+  table.sort(kinds)
+  for _, kind in ipairs(kinds) do
+    self.selectbox:add_option(kind, self.kinds[kind])
+  end
+  sync_selectbox_selection(self)
+end
+
+---Build tree items from document symbols.
 ---@param results lsp.protocol.DocumentSymbol[] | lsp.protocol.SymbolInformation[]
----@param parent? widget.treelist.item
-function SymbolsTree:add_results(results, parent)
+---@param top_level? boolean
+---@return widget.treelist.item[]
+function SymbolsTree:add_results(results, top_level)
   ---@type widget.treelist.item[]
   local items = {}
 
   for i=1, #results do
     local result = results[i]
+    local kind = SYMBOLS_KIND_ICONS[result.kind]
+    local childs = result.children and self:add_results(result.children) or nil
+
+    self.kinds[kind.name] = result.kind
 
     ---@type widget.treelist.item
     local item = {
@@ -105,13 +217,12 @@ function SymbolsTree:add_results(results, parent)
       label = result.name
     }
 
-    item.icon = SYMBOLS_KIND_ICONS[result.kind].icon
-
-    if result.children then
-      self:add_results(result.children, item)
+    item.icon = kind.icon
+    if childs and #childs > 0 then
+      item.childs = childs
     end
 
-    if not parent and #results <= 2 then
+    if top_level and #results <= 2 then
       item.expanded = true
     end
 
@@ -120,10 +231,10 @@ function SymbolsTree:add_results(results, parent)
       type = result.kind,
     }
 
-    item.tooltip = SYMBOLS_KIND_ICONS[result.kind].name
+    item.tooltip = kind.name
 
     local container = result.containerName
-      and self:query_item(result.containerName, parent or items) or nil
+      and self.tree:query_item(result.containerName, items) or nil
     if container then
       container.childs = container.childs or {}
       table.insert(container.childs, item)
@@ -132,28 +243,38 @@ function SymbolsTree:add_results(results, parent)
     end
   end
 
-  if not parent then
-    self.items = items
-    self.symbols_loaded = true
-  else
-    parent.childs = items
-  end
+  return items
 end
 
----@param item widget.treelist.item
----@param active boolean
----@param hovered boolean
-function SymbolsTree:get_item_icon(item, active, hovered)
-  local character = item.icon
-  local font = self.icon_font or style.icon_font
-  local color = item.data and
-    style.syntax[SYMBOLS_KIND_ICONS[item.data.type].color]
-    or
-    style.text
-  if active or hovered then
-    color = common.lighten_color(color, 40)
+---@param results? lsp.protocol.DocumentSymbol[] | lsp.protocol.SymbolInformation[]
+function SymbolsTree:set_results(results)
+  self.kinds = {}
+
+  if not results or #results == 0 then
+    self.tree:clear()
+    add_select_kinds(self)
+    self.symbols_loaded = false
+    return
   end
-  return character, font, color
+
+  self.tree.items = self:add_results(results, true)
+  self.tree.selected_item = nil
+  add_select_kinds(self)
+  self:set_filter(self.filter_kind)
+  self.symbols_loaded = #self.tree.items > 0
+end
+
+---@param kind integer?
+function SymbolsTree:set_filter(kind)
+  self.filter_kind = kind or 0
+  apply_filter(self)
+  sync_selectbox_selection(self)
+end
+
+---@param text string?
+function SymbolsTree:set_name_filter(text)
+  self.filter_text = text or ""
+  apply_filter(self)
 end
 
 function SymbolsTree:clear_current_doc(doc_check)
@@ -189,7 +310,7 @@ end
 ---Jumps to the symbol associated to current or given item.
 ---@param item? widget.treelist.item
 function SymbolsTree:goto_symbol(item)
-  item = item or self.selected_item
+  item = item or self.tree.selected_item
   if not item or not item.data then return end
   local line1, col1 = util.toselection(item.data.range, self.current_doc)
 
@@ -201,12 +322,6 @@ function SymbolsTree:goto_symbol(item)
     dv.doc:set_selection(line1, col1, line1, col1)
     dv:scroll_to_line(line1, false, true)
   end)
-end
-
-function SymbolsTree:on_item_click(item, button, x, y, clicks)
-  if clicks == 1 then
-    self:goto_symbol(item)
-  end
 end
 
 ---Update the tree items each time a different docview is focused or
@@ -225,10 +340,12 @@ function SymbolsTree:update_symbols()
         #core.get_views_referencing_doc(self.current_doc) == 0
       )
     then
-      if #self.items < 1 or self.items[1].name ~= "no-symbols" then
-        self.items = {
+      if #self.tree.items < 1 or self.tree.items[1].name ~= "no-symbols" then
+        self.tree.items = {
           {name = "no-symbols", label = "No Symbols Found"}
         }
+        self.filter_kind = 0
+        reset_selectbox(self)
         self.symbols_loaded = false
         self:clear_current_doc()
       end
@@ -245,14 +362,15 @@ function SymbolsTree:update_symbols()
     if doc ~= self.current_doc and doc.lsp_symbols then
       self.current_doc = doc
       self.last_change_id = doc:get_change_id()
-      self:add_results(doc.lsp_symbols)
-      self.symbols_loaded = true
+      self:set_results(doc.lsp_symbols)
       return
     end
     if self.current_doc ~= doc and not doc.lsp_symbols then
-      self.items = {
+      self.tree.items = {
         {name = "loading", label = "Loading..."}
       }
+      self.filter_kind = 0
+      reset_selectbox(self)
     end
     self.current_doc = doc
     self.last_change_id = doc:get_change_id()
@@ -285,12 +403,16 @@ function SymbolsTree:update_symbols()
           callback = function(server, response)
             local active_doc = self:get_active_doc()
             if response.result and response.result and #response.result > 0 then
-              if doc == active_doc then self:add_results(response.result) end
+              if doc == active_doc then
+                self:set_results(response.result)
+              end
               doc.lsp_symbols = response.result
             elseif doc == active_doc then
-              self.items = {
+              self.tree.items = {
                 {name = "no-symbols", label = "No Symbols Found"}
               }
+              self.filter_kind = 0
+              reset_selectbox(self)
               self.symbols_loaded = false
             end
             self.fetching_docs[doc.abs_filename] = nil
@@ -312,8 +434,23 @@ function SymbolsTree:update_symbols()
 end
 
 function SymbolsTree:update()
-  SymbolsTree.super.update(self)
+  self.textbox:set_size(self:get_width() - self.textbox.border.width * 2)
+  self.selectbox:set_size(self:get_width() - self.selectbox.border.width * 2)
+  self.textbox:update_size_position()
+  self.selectbox:update_size_position()
+
+  local textbox_height = self.textbox:get_height()
+  local selectbox_height = self.selectbox:get_height()
+  self.tree:set_position(0, 0)
+  self.tree:set_size(
+    self:get_width(),
+    self:get_height() - textbox_height - selectbox_height
+  )
+  self.textbox:set_position(0, self:get_height() - selectbox_height - textbox_height)
+  self.selectbox:set_position(0, self:get_height() - selectbox_height)
+  if not SymbolsTree.super.update(self) then return false end
   if self:is_visible() then self:update_symbols() end
+  return true
 end
 
 --
@@ -321,15 +458,15 @@ end
 --
 command.add(SymbolsTree, {
   ["lsp-symbols-tree:select-previous"] = function(view)
-    view:select_prev()
+    view.tree:select_prev()
   end,
 
   ["lsp-symbols-tree:select-next"] = function(view)
-    view:select_next()
+    view.tree:select_next()
   end,
 
   ["lsp-symbols-tree:toggle-expand"] = function(view)
-    view:toggle_expand()
+    view.tree:toggle_expand()
   end,
 
   ["lsp-symbols-tree:open-selected"] = function(view)
