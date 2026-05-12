@@ -278,13 +278,14 @@ end
 ---Used on windows to check if command is a valid executable on the given path.
 ---
 ---If the command does not contains a file extension it will automatically
----search using the extensions: .exe, .cmd or .bat in that same order.
+---search using the extensions: .exe, .com, .cmd or .bat in that same order.
 ---@param command string
 ---@param path? string
+---@param extensions? string[]
 ---@return boolean
-local function win_command_exists(command, path)
+local function win_command_exists(command, path, extensions)
   path = path or ""
-  local extensions = {"exe", "cmd", "bat"}
+  extensions = extensions or {"com", "exe", "cmd", "bat"}
   local has_extension = false
   for _, ext in ipairs(extensions) do
     if command:lower():find("%."..ext.."$") then
@@ -304,6 +305,32 @@ local function win_command_exists(command, path)
       end
     end
   end
+  return false
+end
+
+---Check if a command can be launched directly by the Windows process API.
+---
+---This intentionally excludes .cmd and .bat scripts because those still need
+---cmd.exe as an interpreter.
+---@param command string
+---@return boolean
+function util.win_command_is_executable(command)
+  local extensions = {"com", "exe"}
+
+  if util.file_exists(command) or win_command_exists(command, nil, extensions) then
+    return true
+  end
+
+  local env_path = os.getenv("PATH") or ""
+  for _, path in pairs(util.split(env_path, ";")) do
+    local path_fix = path:gsub("[/\\]$", "") .. PATHSEP
+    if util.file_exists(path_fix .. command) then
+      return true
+    elseif win_command_exists(command, path_fix, extensions) then
+      return true
+    end
+  end
+
   return false
 end
 

@@ -322,7 +322,7 @@ function Server:initialize(workspace, editor_name, editor_version)
               -- Snippets are required by css-languageserver
               snippetSupport = self.snippets or self.fake_snippets,
               -- commitCharactersSupport = true,
-              documentationFormat = {'plaintext'},
+              documentationFormat = {'markdown', 'plaintext'},
               -- deprecatedSupport = false, -- simple autocompletion list
               -- preselectSupport = true
               -- tagSupport = {valueSet = {}},

@@ -23,18 +23,10 @@ local translate = require "core.doc.translate"
 local autocomplete = require "plugins.autocomplete"
 local Doc = require "core.doc"
 local DocView = require "core.docview"
+local MarkdownView = require "core.markdownview"
 local StatusView = require "core.statusview"
 local RootView = require "core.rootview"
 local contextmenu
-local LineWrapping
--- If the lsp plugin is loaded from users init.lua it will load linewrapping
--- even if it was disabled from the settings ui, so we queue this check since
--- there is no way to automatically load settings ui before the user module.
-core.add_thread(function()
-  if config.plugins.linewrapping or type(config.plugins.linewrapping) == "nil" then
-    LineWrapping = require "plugins.linewrapping"
-  end
-end)
 
 local json = require "plugins.lsp.json"
 local util = require "plugins.lsp.util"
@@ -48,9 +40,6 @@ local SymbolResults = require "plugins.lsp.ui.symbolresults"
 local SymbolsTree = require "plugins.lsp.ui.symbolstree"
 local MessageBox = require "widget.messagebox"
 local snippets_found, snippets = pcall(require, "plugins.snippets")
-
----@type lsp.helpdoc
-local HelpDoc = require "plugins.lsp.helpdoc"
 
 --
 -- Main plugin functionality
@@ -567,13 +556,6 @@ local function autocomplete_onhover(index, item)
               symbol.documentation.value
             then
               item.desc = item.desc .. symbol.documentation.value
-              if
-                symbol.documentation.kind
-                and
-                symbol.documentation.kind == "markdown"
-              then
-                item.desc = util.strip_markdown(item.desc)
-              end
             else
               item.desc = item.desc .. symbol.documentation
             end
@@ -733,9 +715,14 @@ function lsp.add_server(options)
     options.command[1] = util.get_best_executable(options.command[1])
   end
 
-  -- On Windows using cmd.exe allows us to take advantage of its ability to run
-  -- the correct executable, as well as running scripts.
-  if PLATFORM == "Windows" and not options.windows_skip_cmd then
+  -- On Windows use cmd.exe only for commands that need shell resolution or
+  -- script interpretation. Native .exe/.com programs are launched directly so
+  -- process termination targets the actual server.
+  if
+    PLATFORM == "Windows"
+    and not options.windows_skip_cmd
+    and not util.win_command_is_executable(options.command[1])
+  then
     table.insert(options.command, 1, "/C")
     table.insert(options.command, 1, "cmd.exe")
   end
@@ -1548,16 +1535,6 @@ function lsp.request_completion(doc, line, col, forced)
               symbol.documentation.value
             then
               desc = desc .. "\n" .. symbol.documentation.value
-              if
-                symbol.documentation.kind
-                and
-                symbol.documentation.kind == "markdown"
-              then
-                desc = util.strip_markdown(desc)
-                if symbol_count % 10 == 0 then
-                  coroutine.yield()
-                end
-              end
             elseif symbol.documentation then
               desc = desc .. "\n" .. symbol.documentation
             end
@@ -1709,25 +1686,21 @@ function lsp.request_hover(doc, line, col, in_tab)
             if text and #text > 0 then
               text = text:gsub("^[\n%s]+", ""):gsub("[\n%s]+$", "")
               if not in_tab then
-                if kind == "markdown" then text = util.strip_markdown(text) end
-                listbox.show_text(
-                  text,
-                  { line = line, col = col }
-                )
+                if kind == "markdown" then
+                  listbox.show_markdown(text, { line = line, col = col })
+                else
+                  listbox.show_text(text, { line = line, col = col })
+                end
               else
                 local line1, col1 = translate.start_of_word(doc, line, col)
                 local line2, col2 = translate.end_of_word(doc, line1, col1)
                 local title = doc:get_text(line1, col1, line2, col2):gsub("%s*", "")
                 title = "Help:" .. title .. ".md"
-                ---@type lsp.helpdoc
-                local helpdoc = HelpDoc(title, title)
-                helpdoc:set_text(text)
-                local helpview = DocView(helpdoc)
+                local helpview = MarkdownView({
+                  text = text,
+                  title = title
+                })
                 helpview.context = "application"
-                helpview.wrapping_enabled = true
-                if LineWrapping then
-                  LineWrapping.update_docview_breaks(helpview)
-                end
                 if
                   not help_bottom_node
                   or

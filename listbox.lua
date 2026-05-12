@@ -8,9 +8,11 @@
 local core = require "core"
 local common = require "core.common"
 local command = require "core.command"
+local config = require "core.config"
 local style = require "core.style"
 local keymap = require "core.keymap"
 local util = require "plugins.lsp.util"
+local MarkdownView = require "core.markdownview"
 local RootView = require "core.rootview"
 local DocView = require "core.docview"
 
@@ -75,16 +77,55 @@ local settings = {
 }
 
 local mt = { __tostring = function(t) return t.text end }
+local markdown_view
+local markdown_rect
 
 --------------------------------------------------------------------------------
 -- Private functions
 --------------------------------------------------------------------------------
+
+local function point_over_rect(x, y, rect)
+  return rect
+    and x >= rect.x and y >= rect.y
+    and x <= rect.x + rect.w and y <= rect.y + rect.h
+end
 
 ---@return core.docview | nil
 local function get_active_view()
   if getmetatable(core.active_view) == DocView then
     return core.active_view
   end
+end
+
+local function get_anchor_position(active_view)
+  local line, col
+  if settings.line then
+    line, col = settings.line, settings.col
+  else
+    line, col = active_view.doc:get_selection()
+  end
+
+  -- Validate line against current view because there can be cases
+  -- when user rapidly switches between tabs causing the deferred draw
+  -- to be called late and the current document view already changed.
+  if line > #active_view.doc.lines then
+    listbox.hide()
+    return
+  end
+
+  local x, y = active_view:get_line_screen_position(line)
+
+  -- This function causes tokenizer to fail if given line is greater than
+  -- the amount of lines the document holds, so validation above is needed.
+  x = x + active_view:get_col_x_offset(line, col)
+
+  if settings.above_text and line > 1 then
+    y = y - active_view:get_line_height() - style.padding.y
+  else
+    y = y + active_view:get_line_height() + style.padding.y
+  end
+
+  return x, y
 end
 
 ---@param active_view core.docview
@@ -98,35 +139,12 @@ local function get_suggestions_rect(active_view)
     return 0, 0, 0, 0
   end
 
-  local line, col
-  if settings.line then
-    line, col = settings.line, settings.col
-  else
-    line, col = active_view.doc:get_selection()
-  end
-
-  -- Validate line against current view because there can be cases
-  -- when user rapidly switches between tabs causing the deferred draw
-  -- to be called late and the current document view already changed.
-  if line > #active_view.doc.lines then
-    listbox.hide()
+  local x, y = get_anchor_position(active_view)
+  if not x then
     return 0, 0, 0, 0
   end
-
-  local x, y = active_view:get_line_screen_position(line)
-
-  -- This function causes tokenizer to fail if given line is greater than
-  -- the amount of lines the document holds, so validation above is needed.
-  x = x + active_view:get_col_x_offset(line, col)
-
   local padding_x = style.padding.x
   local padding_y = style.padding.y
-
-  if settings.above_text and line > 1 then
-    y = y - active_view:get_line_height() - style.padding.y
-  else
-    y = y + active_view:get_line_height() + style.padding.y
-  end
 
   local font = settings.is_list and active_view:get_font() or style.font
   local text_height = font:get_height()
@@ -176,6 +194,31 @@ local function get_suggestions_rect(active_view)
   end
 
   return x, y, width, height
+end
+
+---@param av core.docview
+local function draw_markdown_box(av)
+  if not markdown_view then
+    return
+  end
+
+  local x, y = get_anchor_position(av)
+  if not x then
+    return
+  end
+
+  local win_w, win_h = system.get_window_size(core.window)
+  local width = math.min(math.max(360 * SCALE, win_w * 0.45), win_w - x - style.padding.x * 2)
+  if width < 180 * SCALE then
+    width = win_w - style.padding.x * 4
+    x = style.padding.x * 2
+  end
+  local _, content_height = markdown_view:get_rendered_size(width)
+  local available_height = win_h - y - style.padding.y
+  local height = math.min(content_height, math.max(available_height, 1), math.max(120 * SCALE, win_h * 0.55))
+
+  markdown_view:draw_at(x, y, width, height, style.background3, true)
+  markdown_rect = { x = x, y = y, w = width, h = height }
 end
 
 ---@param av core.docview
@@ -303,6 +346,8 @@ function listbox.clear()
   settings.shown_items = {}
   settings.line = nil
   settings.col = nil
+  markdown_view = nil
+  markdown_rect = nil
 end
 
 ---@param element lsp.listbox.item
@@ -316,6 +361,8 @@ function listbox.hide()
   settings.col = nil
   settings.selected_item_idx = 1
   settings.shown_items = {}
+  markdown_view = nil
+  markdown_rect = nil
   core.redraw = true
 end
 
@@ -339,6 +386,8 @@ end
 ---@param text string
 ---@param position? lsp.listbox.position
 function listbox.show_text(text, position)
+  markdown_view = nil
+  markdown_rect = nil
   if text and type("text") == "string" then
     local win_w = system.get_window_size(core.window) - style.padding.x * 6
     text = util.wrap_text(text, style.font, win_w)
@@ -351,6 +400,27 @@ function listbox.show_text(text, position)
   end
 
   listbox.show(false, position)
+end
+
+---@param text string
+---@param position? lsp.listbox.position
+function listbox.show_markdown(text, position)
+  listbox.clear()
+  if text and type(text) == "string" and #text > 0 then
+    markdown_view = MarkdownView({
+      text = text,
+      title = "LSP Documentation"
+    })
+  end
+
+  set_position(position)
+
+  local active_view = get_active_view()
+  if active_view and markdown_view then
+    settings.active_view = active_view
+    settings.last_line, settings.last_col = active_view.doc:get_selection()
+    core.redraw = true
+  end
 end
 
 ---@param items lsp.listbox.item[]
@@ -483,10 +553,18 @@ end
 --------------------------------------------------------------------------------
 local root_view_update = RootView.update
 local root_view_draw = RootView.draw
+local root_view_on_mouse_pressed = RootView.on_mouse_pressed
+local root_view_on_mouse_released = RootView.on_mouse_released
+local root_view_on_mouse_moved = RootView.on_mouse_moved
+local root_view_on_mouse_wheel = RootView.on_mouse_wheel
 
 RootView.update = function(...)
   root_view_update(...)
   if not settings.active_view then return end
+
+  if markdown_view then
+    markdown_view:update()
+  end
 
   local active_view = get_active_view()
   if active_view then
@@ -509,14 +587,68 @@ RootView.draw = function(...)
     local active_view = get_active_view()
     if
       active_view and settings.active_view == active_view
-      and
-      #settings.shown_items > 0
     then
-      -- draw suggestions box after everything else
-      core.root_view:defer_draw(draw_listbox, active_view)
+      if markdown_view then
+        core.root_view:defer_draw(draw_markdown_box, active_view)
+      elseif #settings.shown_items > 0 then
+        -- draw suggestions box after everything else
+        core.root_view:defer_draw(draw_listbox, active_view)
+      end
     end
   end
   root_view_draw(...)
+end
+
+RootView.on_mouse_pressed = function(self, button, x, y, clicks)
+  if markdown_view and point_over_rect(x, y, markdown_rect) then
+    if markdown_view:on_mouse_pressed(button, x, y, clicks) then
+      return true
+    end
+  end
+  return root_view_on_mouse_pressed(self, button, x, y, clicks)
+end
+
+RootView.on_mouse_released = function(self, button, x, y)
+  if markdown_view then
+    markdown_view:on_mouse_released(button, x, y)
+  end
+  return root_view_on_mouse_released(self, button, x, y)
+end
+
+RootView.on_mouse_moved = function(self, x, y, dx, dy)
+  if markdown_view and (point_over_rect(x, y, markdown_rect) or markdown_view:scrollbar_dragging()) then
+    local handled = markdown_view:on_mouse_moved(x, y, dx, dy)
+    if handled then
+      core.request_cursor(markdown_view.cursor)
+      core.redraw = true
+      return true
+    end
+    local result = root_view_on_mouse_moved(self, x, y, dx, dy)
+    core.request_cursor(markdown_view.cursor)
+    core.redraw = true
+    return result
+  elseif markdown_view then
+    markdown_view:on_mouse_left()
+  end
+  return root_view_on_mouse_moved(self, x, y, dx, dy)
+end
+
+RootView.on_mouse_wheel = function(self, y, x)
+  if markdown_view and point_over_rect(core.root_view.mouse.x, core.root_view.mouse.y, markdown_rect) then
+    if keymap.modkeys["shift"] then
+      x = y
+      y = 0
+    end
+    if y and y ~= 0 then
+      markdown_view.scroll.to.y = markdown_view.scroll.to.y + y * -config.mouse_wheel_scroll
+    end
+    if x and x ~= 0 then
+      markdown_view.scroll.to.x = markdown_view.scroll.to.x + x * -config.mouse_wheel_scroll
+    end
+    core.redraw = true
+    return true
+  end
+  return root_view_on_mouse_wheel(self, y, x)
 end
 
 --------------------------------------------------------------------------------
@@ -524,7 +656,7 @@ end
 --------------------------------------------------------------------------------
 local function predicate()
   local av = get_active_view()
-  return av and settings.active_view and #settings.shown_items > 0, av
+  return av and settings.active_view and (#settings.shown_items > 0 or markdown_view), av
 end
 
 command.add(predicate, {
