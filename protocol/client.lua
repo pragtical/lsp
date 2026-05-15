@@ -1,0 +1,1128 @@
+--
+-- This file defines some of the LSP protocol elements related to client
+-- for type hinting usage with the sumneko lua language server.
+--
+-- LSP Documentation:
+-- https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification
+
+---@class lsp.protocol.client
+local client = {}
+
+
+---The kind of resource operations supported by the client.
+---@enum lsp.protocol.client.ResourceOperationKind
+client.ResourceOperationKind = {
+	---Supports creating new files and folders.
+	Create = 'create',
+	---Supports renaming existing files and folders.
+	Rename = 'rename',
+	---Supports deleting existing files and folders.
+	Delete = 'delete'
+}
+
+---The kind of failure handle supported by the client.
+---@enum lsp.protocol.client.FailureHandlingKind
+client.FailureHandlingKind = {
+	---Applying the workspace change is simply aborted if one of the changes
+	---provided fails. All operations executed before the failing operation
+	---stay executed.
+	Abort = 'abort',
+	---All operations are executed transactional. That means they either all
+	---succeed or no changes at all are applied to the workspace.
+	Transactional = 'transactional',
+	---If the workspace edit contains only textual file changes they are
+	---executed transactional. If resource changes (create, rename or delete
+	---file) are part of the change the failure handling strategy is abort.
+	TextOnlyTransactional = 'textOnlyTransactional',
+	---The client tries to undo the operations already executed. But there is no
+	---guarantee that this is succeeding.
+	Undo = 'undo'
+}
+
+
+---Generic valueSet used thru various client capabilities.
+---@class lsp.protocol.client.ValueSet<T>: { valueSet: T[] }
+
+
+---Generic properties used thru various client capabilities.
+---@class lsp.protocol.client.Properties<T>: { properties: T[] }
+
+
+---@class lsp.protocol.client.ChangeAnnotationWorkspaceEditClientCapabilities
+---Whether the client groups edits with equal labels into tree nodes,
+---for instance all edits labelled with "Changes in Strings" would
+---be a tree node.
+---@field groupsOnLabel? boolean
+
+
+---New in version 3.13: ResourceOperationKind and FailureHandlingKind and the
+---client capability workspace.workspaceEdit.resourceOperations as well as
+---workspace.workspaceEdit.failureHandling.
+---
+---The capabilities of a workspace edit has evolved over the time. Clients
+---can describe their support using the following client capability:
+---
+---Client Capability:
+---
+--- property path (optional): workspace.workspaceEdit
+--- property type: WorkspaceEditClientCapabilities defined as follows:
+---@class lsp.protocol.client.WorkspaceEditClientCapabilities
+---The client supports versioned document changes in `WorkspaceEdit`s
+---@field documentChanges? boolean
+---The resource operations the client supports. Clients should at least
+---support 'create', 'rename' and 'delete' files and folders.
+---
+---since 3.13.0
+---@field resourceOperations? lsp.protocol.client.ResourceOperationKind[]
+---The failure handling strategy of a client if applying the workspace edit
+---fails.
+---
+---since 3.13.0
+---@field failureHandling? lsp.protocol.client.FailureHandlingKind
+---Whether the client normalizes line endings to the client specific
+---setting.
+---If set to `true` the client will normalize line ending characters
+---in a workspace edit to the client specific new line character(s).
+---
+---since 3.16.0
+---@field normalizesLineEndings? boolean
+---Whether the client in general supports change annotations on text edits,
+---create file, rename file and delete file changes.
+---
+---since 3.16.0
+---@field changeAnnotationSupport? lsp.protocol.client.ChangeAnnotationWorkspaceEditClientCapabilities
+
+
+---A notification sent from the client to the server to signal the change of configuration settings.
+---Client Capability:
+---
+--- property path (optional): workspace.didChangeConfiguration
+--- property type: DidChangeConfigurationClientCapabilities defined as follows:
+---@class lsp.protocol.client.DidChangeConfigurationClientCapabilities
+---Did change configuration notification supports dynamic registration.
+---
+---since 3.6.0 to support the new pull model.
+---@field dynamicRegistration? boolean
+
+
+---The watched files notification is sent from the client to the server when
+---the client detects changes to files and folders watched by the language
+---client (note although the name suggest that only file events are sent it is
+---about file system events which include folders as well). It is recommended
+---that servers register for these file system events using the registration
+---mechanism. In former implementations clients pushed file events without
+---the server actively asking for it.
+---
+---Servers are allowed to run their own file system watching mechanism and not
+---rely on clients to provide file system events. However this is not
+---recommended due to the following reasons:
+---
+---* to our experience getting file system watching on disk right is
+---  challenging, especially if it needs to be supported across multiple OSes.
+---* file system watching is not for free especially if the implementation uses
+---  some sort of polling and keeps a file system tree in memory to compare
+---  time stamps (as for example some node modules do)
+---* a client usually starts more than one server. If every server runs its own
+---  file system watching it can become a CPU or memory problem.
+---* in general there are more server than client implementations. So this
+---  problem is better solved on the client side.
+---
+---Client Capability:
+---
+--- property path (optional): workspace.didChangeWatchedFiles
+--- property type: DidChangeWatchedFilesClientCapabilities defined as follows:
+---@class lsp.protocol.client.DidChangeWatchedFilesClientCapabilities
+---Did change watched files notification supports dynamic registration.
+---Please note that the current protocol doesn't support static
+---configuration for file changes from the server side.
+---@field dynamicRegistration? boolean
+---Whether the client has support for relative patterns
+---or not.
+---
+---since 3.17.0
+---@field relativePatternSupport? boolean
+
+
+---The workspace symbol request is sent from the client to the server to
+---list project-wide symbols matching the query string. Since 3.17.0 servers
+---can also provider a handler for workspaceSymbol/resolve requests. This
+---allows servers to return workspace symbols without a range for a
+---workspace/symbol request. Clients then need to resolve the range when
+---necessary using the workspaceSymbol/resolve request. Servers can only use
+---this new model if clients advertise support for it via the
+---workspace.symbol.resolveSupport capability.
+---
+---Client Capability:
+---
+--- property path (optional): workspace.symbol
+--- property type: WorkspaceSymbolClientCapabilities defined as follows:
+---@class lsp.protocol.client.WorkspaceSymbolClientCapabilities
+---Symbol request supports dynamic registration.
+---@field dynamicRegistration? boolean
+---Specific capabilities for the `SymbolKind` in the `workspace/symbol`
+---request.
+---@field symbolKind? lsp.protocol.client.ValueSet<lsp.protocol.SymbolKind>
+---The client supports tags on `SymbolInformation` and `WorkspaceSymbol`.
+---Clients supporting tags have to handle unknown tags gracefully.
+---
+---since 3.16.0
+---@field tagSupport? lsp.protocol.client.ValueSet<lsp.protocol.SymbolTag>
+---The client support partial workspace symbols. The client will send the
+---request `workspaceSymbol/resolve` to the server to resolve additional
+---properties.
+---
+---since 3.17.0 - proposedState
+---@field resolveSupport? lsp.protocol.client.Properties<string>
+
+
+---The workspace/executeCommand request is sent from the client to the server
+---to trigger command execution on the server. In most cases the server creates
+---a WorkspaceEdit structure and applies the changes to the workspace using the
+---request workspace/applyEdit which is sent from the server to the client.
+---
+---Client Capability:
+---
+--- property path (optional): workspace.executeCommand
+--- property type: ExecuteCommandClientCapabilities defined as follows:
+---@class lsp.protocol.client.ExecuteCommandClientCapabilities
+---Execute command supports dynamic registration.
+---@field dynamicRegistration? boolean
+
+
+---The workspace/semanticTokens/refresh request is sent from the server to
+---the client. Servers can use it to ask clients to refresh the editors for
+---which this server provides semantic tokens. As a result the client should
+---ask the server to recompute the semantic tokens for these editors. This is
+---useful if a server detects a project wide configuration change which
+---requires a re-calculation of all semantic tokens. Note that the client
+---still has the freedom to delay the re-calculation of the semantic tokens if
+---for example an editor is currently not visible.
+---
+---Client Capability:
+---
+--- property name (optional): workspace.semanticTokens
+--- property type: SemanticTokensWorkspaceClientCapabilities defined as follows:
+---@class lsp.protocol.client.SemanticTokensWorkspaceClientCapabilities
+---Whether the client implementation supports a refresh request sent from
+---the server to the client.
+---
+---Note that this event is global and will force the client to refresh all
+---semantic tokens currently shown. It should be used with absolute care
+---and is useful for situation where a server for example detect a project
+---wide change that requires such a calculation.
+---@field refreshSupport? boolean
+
+
+---The workspace/codeLens/refresh request is sent from the server to the client.
+---Servers can use it to ask clients to refresh the code lenses currently shown
+---in editors. As a result the client should ask the server to recompute the
+---code lenses for these editors. This is useful if a server detects a
+---configuration change which requires a re-calculation of all code lenses.
+---Note that the client still has the freedom to delay the re-calculation of
+---the code lenses if for example an editor is currently not visible.
+---
+---Client Capability:
+---
+--- property name (optional): workspace.codeLens
+--- property type: CodeLensWorkspaceClientCapabilities defined as follows:
+---@class lsp.protocol.client.CodeLensWorkspaceClientCapabilities
+---Whether the client implementation supports a refresh request sent from the
+---server to the client.
+---
+---Note that this event is global and will force the client to refresh all
+---code lenses currently shown. It should be used with absolute care and is
+---useful for situation where a server for example detect a project wide
+---change that requires such a calculation.
+---@field refreshSupport? boolean
+
+
+---The workspace/inlineValue/refresh request is sent from the server to the
+---client. Servers can use it to ask clients to refresh the inline values
+---currently shown in editors. As a result the client should ask the server
+---to recompute the inline values for these editors. This is useful if a
+---server detects a configuration change which requires a re-calculation of
+---all inline values. Note that the client still has the freedom to delay the
+---re-calculation of the inline values if for example an editor is currently
+---not visible.
+---
+---Client Capability:
+---
+--- property name (optional): workspace.inlineValue
+--- property type: InlineValueWorkspaceClientCapabilities defined as follows:
+---
+---Client workspace capabilities specific to inline values.
+---
+---since 3.17.0
+---@class lsp.protocol.client.InlineValueWorkspaceClientCapabilities
+---Whether the client implementation supports a refresh request sent from
+---the server to the client.
+---
+---Note that this event is global and will force the client to refresh all
+---inline values currently shown. It should be used with absolute care and
+---is useful for situation where a server for example detect a project wide
+---change that requires such a calculation.
+---@field refreshSupport? boolean
+
+
+---The workspace/inlayHint/refresh request is sent from the server to the
+---client. Servers can use it to ask clients to refresh the inlay hints
+---currently shown in editors. As a result the client should ask the server
+---to recompute the inlay hints for these editors. This is useful if a server
+---detects a configuration change which requires a re-calculation of all inlay
+---hints. Note that the client still has the freedom to delay the re-calculation
+---of the inlay hints if for example an editor is currently not visible.
+---
+---Client Capability:
+---
+--- property name (optional): workspace.inlayHint
+--- property type: InlayHintWorkspaceClientCapabilities defined as follows:
+---
+---Client workspace capabilities specific to inlay hints.
+---
+---since 3.17.0
+---@class lsp.protocol.client.InlayHintWorkspaceClientCapabilities
+---Whether the client implementation supports a refresh request sent from
+---the server to the client.
+---
+---Note that this event is global and will force the client to refresh all
+---inlay hints currently shown. It should be used with absolute care and
+---is useful for situation where a server for example detects a project wide
+---change that requires such a calculation.
+---@field refreshSupport? boolean
+
+
+---The workspace/diagnostic/refresh request is sent from the server to the
+---client. Servers can use it to ask clients to refresh all needed document
+---and workspace diagnostics. This is useful if a server detects a project
+---wide configuration change which requires a re-calculation of all diagnostics.
+---
+---Client Capability:
+---
+--- property name (optional): workspace.diagnostics
+--- property type: DiagnosticWorkspaceClientCapabilities defined as follows:
+---
+---Workspace client capabilities specific to diagnostic pull requests.
+---
+---since 3.17.0
+---@class lsp.protocol.client.DiagnosticWorkspaceClientCapabilities
+---Whether the client implementation supports a refresh request sent from
+---the server to the client.
+---
+---Note that this event is global and will force the client to refresh all
+---pulled diagnostics currently shown. It should be used with absolute care
+---and is useful for situation where a server for example detects a project
+---wide change that requires such a calculation.
+---@field refreshSupport? boolean
+
+
+---Workspace file operatations client capabilities.
+---@class lsp.protocol.client.FileOperationsWorkspaceClientCapabilities
+---Whether the client supports dynamic registration for file
+---requests/notifications.
+---@field dynamicRegistration? boolean
+---The client has support for sending didCreateFiles notifications.
+---@field didCreate? boolean
+---The client has support for sending willCreateFiles requests.
+---@field willCreate? boolean
+---The client has support for sending didRenameFiles notifications.
+---@field didRename? boolean
+---The client has support for sending willRenameFiles requests.
+---@field willRename? boolean
+---The client has support for sending didDeleteFiles notifications.
+---@field didDelete? boolean
+---The client has support for sending willDeleteFiles requests.
+---@field willDelete? boolean
+
+
+---@class lsp.protocol.client.WorkspaceClientCapabilities
+---The client supports applying batch edits
+---to the workspace by supporting the request
+---'workspace/applyEdit'
+---@field applyEdit? boolean
+---Capabilities specific to `WorkspaceEdit`s
+---@field workspaceEdit? lsp.protocol.client.WorkspaceEditClientCapabilities
+---Capabilities specific to the `workspace/didChangeConfiguration`
+---notification.
+---@field didChangeConfiguration? lsp.protocol.client.DidChangeConfigurationClientCapabilities
+---Capabilities specific to the `workspace/didChangeWatchedFiles`
+---notification.
+---@field didChangeWatchedFiles? lsp.protocol.client.DidChangeWatchedFilesClientCapabilities
+---Capabilities specific to the `workspace/symbol` request.
+---@field symbol? lsp.protocol.client.WorkspaceSymbolClientCapabilities
+---Capabilities specific to the `workspace/executeCommand` request.
+---@field executeCommand? lsp.protocol.client.ExecuteCommandClientCapabilities
+---The client has support for workspace folders.
+---
+---since 3.6.0
+---@field workspaceFolders? boolean
+---The client supports `workspace/configuration` requests.
+---
+---since 3.6.0
+---@field configuration? boolean
+---Capabilities specific to the semantic token requests scoped to the
+---workspace.
+---
+---since 3.16.0
+---@field semanticTokens? lsp.protocol.client.SemanticTokensWorkspaceClientCapabilities
+---Capabilities specific to the code lens requests scoped to the
+---workspace.
+---
+---since 3.16.0
+---@field codeLens? lsp.protocol.client.CodeLensWorkspaceClientCapabilities
+---The client has support for file requests/notifications.
+---
+---since 3.16.0
+---@field fileOperations? lsp.protocol.client.FileOperationsWorkspaceClientCapabilities
+---Client workspace capabilities specific to inline values.
+---
+---since 3.17.0
+---@field inlineValue? lsp.protocol.client.InlineValueWorkspaceClientCapabilities
+---Client workspace capabilities specific to inlay hints.
+---
+---since 3.17.0
+---@field inlayHint? lsp.protocol.client.InlayHintWorkspaceClientCapabilities
+---Client workspace capabilities specific to diagnostics.
+---
+---since 3.17.0.
+---@field diagnostics? lsp.protocol.client.DiagnosticWorkspaceClientCapabilities
+
+
+---@class lsp.protocol.client.TextDocumentSyncClientCapabilities
+---Whether text document synchronization supports dynamic registration.
+---@field dynamicRegistration? boolean
+---The client supports sending will save notifications.
+---@field willSave? boolean
+---The client supports sending a will save request and
+---waits for a response providing text edits which will
+---be applied to the document before it is saved.
+---@field willSaveWaitUntil? boolean
+---The client supports did save notifications.
+---@field didSave? boolean
+
+
+---@class lsp.protocol.client.CompletionItemCompletionClientCapabilities
+---Client supports snippets as insert text.
+---
+---A snippet can define tab stops and placeholders with `$1`, `$2`
+---and `${3:foo}`. `$0` defines the final tab stop, it defaults to
+---the end of the snippet. Placeholders with equal identifiers are
+---linked, that is typing in one will update others too.
+---@field snippetSupport? boolean
+---Client supports commit characters on a completion item.
+---@field commitCharactersSupport? boolean
+---Client supports the follow content formats for the documentation
+---property. The order describes the preferred format of the client.
+---@field documentationFormat? lsp.protocol.MarkupKind[];
+---Client supports the deprecated property on a completion item.
+---@field deprecatedSupport? boolean
+---Client supports the preselect property on a completion item.
+---preselectSupport? boolean
+---Client supports the tag property on a completion item. Clients
+---supporting tags have to handle unknown tags gracefully. Clients
+---especially need to preserve unknown tags when sending a completion
+---item back to the server in a resolve call.
+---
+---since 3.15.0
+---@field tagSupport? lsp.protocol.client.ValueSet<lsp.protocol.CompletionItemTag>
+---Client supports insert replace edit to control different behavior if
+---a completion item is inserted in the text or should replace text.
+---
+---since 3.16.0
+---@field insertReplaceSupport? boolean
+---Indicates which properties a client can resolve lazily on a
+---completion item. Before version 3.16.0 only the predefined properties
+---`documentation` and `detail` could be resolved lazily.
+---
+---since 3.16.0
+---@field resolveSupport? lsp.protocol.client.Properties<string>
+---The client supports the `insertTextMode` property on
+---a completion item to override the whitespace handling mode
+---as defined by the client (see `insertTextMode`).
+---
+---since 3.16.0
+---@field insertTextModeSupport? lsp.protocol.client.ValueSet<lsp.protocol.InsertTextMode>
+---The client has support for completion item label
+---details (see also `CompletionItemLabelDetails`).
+---
+---since 3.17.0
+---@field labelDetailsSupport? boolean
+
+---@class lsp.protocol.client.CompletionListCompletionClientCapabilities
+---The client supports the following itemDefaults on
+---a completion list.
+---
+---The value lists the supported property names of the
+---`CompletionList.itemDefaults` object. If omitted
+---no properties are supported.
+---
+---since 3.17.0
+---@field itemDefaults? string[]
+
+---@class lsp.protocol.client.CompletionClientCapabilities
+---Whether completion supports dynamic registration.
+---@field dynamicRegistration? boolean
+---The client supports the following `CompletionItem` specific
+---capabilities.
+---@field completionItem? lsp.protocol.client.CompletionItemCompletionClientCapabilities
+---@field completionItemKind? lsp.protocol.client.ValueSet<lsp.protocol.CompletionItemKind>
+---The client supports to send additional context information for a
+---`textDocument/completion` request.
+---@field contextSupport? boolean
+---The client's default when the completion item doesn't provide a
+---`insertTextMode` property.
+---
+---since 3.17.0
+---@field insertTextMode? lsp.protocol.InsertTextMode
+---The client supports the following `CompletionList` specific
+---capabilities.
+---
+---since 3.17.0
+---@field completionList? lsp.protocol.client.CompletionListCompletionClientCapabilities
+
+---@class lsp.protocol.client.HoverClientCapabilities
+---Whether hover supports dynamic registration.
+---@field dynamicRegistration? boolean
+---Client supports the follow content formats if the content
+---property refers to a `literal of type MarkupContent`.
+---The order describes the preferred format of the client.
+---@field contentFormat? lsp.protocol.MarkupKind[]
+
+---@class lsp.protocol.client.SignatureInformationParameterInformationSignatureHelpClientCapabilities
+---The client supports processing label offsets instead of a
+---simple label string.
+---
+---since 3.14.0
+---@field labelOffsetSupport? boolean
+
+
+---@class lsp.protocol.client.SignatureInformationSignatureHelpClientCapabilities
+---Client supports the follow content formats for the documentation
+---property. The order describes the preferred format of the client.
+---@field documentationFormat? lsp.protocol.MarkupKind[]
+---Client capabilities specific to parameter information.
+---@field parameterInformation? lsp.protocol.client.SignatureInformationParameterInformationSignatureHelpClientCapabilities
+---The client supports the `activeParameter` property on
+---`SignatureInformation` literal.
+---
+---since 3.16.0
+---@field activeParameterSupport? boolean
+
+---@class lsp.protocol.client.SignatureHelpClientCapabilities
+---Whether signature help supports dynamic registration.
+---@field dynamicRegistration? boolean
+---The client supports the following `SignatureInformation`
+---specific properties.
+---@field signatureInformation? lsp.protocol.client.SignatureInformationSignatureHelpClientCapabilities
+---The client supports to send additional context information for a
+---`textDocument/signatureHelp` request. A client that opts into
+---contextSupport will also support the `retriggerCharacters` on
+---`SignatureHelpOptions`.
+---
+---since 3.15.0
+---@field contextSupport? boolean
+
+---@class lsp.protocol.client.DeclarationClientCapabilities
+---Whether declaration supports dynamic registration. If this is set to
+---`true` the client supports the new `DeclarationRegistrationOptions`
+---return value for the corresponding server capability as well.
+---@field dynamicRegistration? boolean
+---The client supports additional metadata in the form of declaration links.
+---@field linkSupport? boolean
+
+---@class lsp.protocol.client.DefinitionClientCapabilities
+---Whether definition supports dynamic registration.
+---@field dynamicRegistration? boolean
+---The client supports additional metadata in the form of definition links.
+---
+---since 3.14.0
+---@field linkSupport? boolean
+
+---@class lsp.protocol.client.TypeDefinitionClientCapabilities
+---Whether implementation supports dynamic registration. If this is set to
+---`true` the client supports the new `TypeDefinitionRegistrationOptions`
+---return value for the corresponding server capability as well.
+---@field dynamicRegistration? boolean
+---The client supports additional metadata in the form of definition links.
+---
+---since 3.14.0
+---@field linkSupport? boolean
+
+---@class lsp.protocol.client.ImplementationClientCapabilities
+---Whether implementation supports dynamic registration. If this is set to
+---`true` the client supports the new `ImplementationRegistrationOptions`
+---return value for the corresponding server capability as well.
+---@field dynamicRegistration? boolean
+---The client supports additional metadata in the form of definition links.
+---
+---since 3.14.0
+---@field linkSupport? boolean
+
+---@class lsp.protocol.client.ReferenceClientCapabilities
+---Whether references supports dynamic registration.
+---@field dynamicRegistration? boolean
+
+---@class lsp.protocol.client.DocumentHighlightClientCapabilities
+---Whether document highlight supports dynamic registration.
+---@field dynamicRegistration? boolean
+
+---@class lsp.protocol.client.DocumentSymbolClientCapabilities
+---Whether document symbol supports dynamic registration.
+---@field dynamicRegistration? boolean
+---Specific capabilities for the `SymbolKind` in the
+---`textDocument/documentSymbol` request.
+---@field symbolKind? lsp.protocol.client.ValueSet<lsp.protocol.SymbolKind>
+---The client supports hierarchical document symbols.
+---@field hierarchicalDocumentSymbolSupport? boolean
+---The client supports tags on `SymbolInformation`. Tags are supported on
+---`DocumentSymbol` if `hierarchicalDocumentSymbolSupport` is set to true.
+---Clients supporting tags have to handle unknown tags gracefully.
+---
+---since 3.16.0
+---@field tagSupport? lsp.protocol.client.ValueSet<lsp.protocol.SymbolTag>
+---The client supports an additional label presented in the UI when
+---registering a document symbol provider.
+---
+---since 3.16.0
+---@field labelSupport? boolean
+
+---@class lsp.protocol.client.CodeActionLiteralSupportCodeActionClientCapabilities
+---The code action kind is supported with the following value
+---set.
+---@field codeActionKind lsp.protocol.client.ValueSet<lsp.protocol.CodeActionKind>
+
+---@class lsp.protocol.client.CodeActionClientCapabilities
+---Whether code action supports dynamic registration.
+---@field dynamicRegistration? boolean
+---The client supports code action literals as a valid
+---response of the `textDocument/codeAction` request.
+---
+---since 3.8.0
+---@field codeActionLiteralSupport? lsp.protocol.client.CodeActionLiteralSupportCodeActionClientCapabilities
+---Whether code action supports the `isPreferred` property.
+---
+---since 3.15.0
+---@field isPreferredSupport? boolean
+---Whether code action supports the `disabled` property.
+---
+---since 3.16.0
+---@field disabledSupport? boolean
+---Whether code action supports the `data` property which is
+---preserved between a `textDocument/codeAction` and a
+---`codeAction/resolve` request.
+---
+---since 3.16.0
+---@field dataSupport? boolean
+---Whether the client supports resolving additional code action
+---properties via a separate `codeAction/resolve` request.
+---
+---since 3.16.0
+---@field resolveSupport? lsp.protocol.client.Properties<string>
+---Whether the client honors the change annotations in
+---text edits and resource operations returned via the
+---`CodeAction#edit` property by for example presenting
+---the workspace edit in the user interface and asking
+---for confirmation.
+---
+---since 3.16.0
+---@field honorsChangeAnnotations? boolean
+
+---@class lsp.protocol.client.CodeLensClientCapabilities
+---Whether code lens supports dynamic registration.
+---@field dynamicRegistration? boolean
+
+---@class lsp.protocol.client.DocumentLinkClientCapabilities
+---Whether document link supports dynamic registration.
+---@field dynamicRegistration? boolean
+---Whether the client supports the `tooltip` property on `DocumentLink`.
+---
+---since 3.15.0
+---@field tooltipSupport? boolean
+
+---@class lsp.protocol.client.DocumentColorClientCapabilities
+---Whether document color supports dynamic registration.
+---@field dynamicRegistration? boolean
+
+---@class lsp.protocol.client.DocumentFormattingClientCapabilities
+---Whether formatting supports dynamic registration.
+---@field dynamicRegistration? boolean
+
+---@class lsp.protocol.client.DocumentRangeFormattingClientCapabilities
+---Whether formatting supports dynamic registration.
+---@field dynamicRegistration? boolean
+
+---@class lsp.protocol.client.DocumentOnTypeFormattingClientCapabilities
+---Whether on type formatting supports dynamic registration.
+---@field dynamicRegistration? boolean
+
+---@class lsp.protocol.client.RenameClientCapabilities
+---Whether rename supports dynamic registration.
+---@field dynamicRegistration? boolean
+---Client supports testing for validity of rename operations
+---before execution.
+---
+---since version 3.12.0
+---@field prepareSupport? boolean
+---Client supports the default behavior result
+---(`{ defaultBehavior: boolean }`).
+---
+---The value indicates the default behavior used by the
+---client.
+---
+---since version 3.16.0
+---@field prepareSupportDefaultBehavior? lsp.protocol.PrepareSupportDefaultBehavior
+---Whether the client honors the change annotations in
+---text edits and resource operations returned via the
+---rename request's workspace edit by for example presenting
+---the workspace edit in the user interface and asking
+---for confirmation.
+---
+---since 3.16.0
+---@field honorsChangeAnnotations? boolean
+
+---@class lsp.protocol.client.PublishDiagnosticsClientCapabilities
+---Whether the clients accepts diagnostics with related information.
+---@field relatedInformation? boolean
+---Client supports the tag property to provide meta data about a diagnostic.
+---Clients supporting tags have to handle unknown tags gracefully.
+---
+---since 3.15.0
+---@field tagSupport? lsp.protocol.client.ValueSet<lsp.protocol.DiagnosticTag>
+---Whether the client interprets the version property of the
+---`textDocument/publishDiagnostics` notification's parameter.
+---
+---since 3.15.0
+---@field versionSupport? boolean
+---Client supports a codeDescription property
+---
+---since 3.16.0
+---@field codeDescriptionSupport? boolean
+---Whether code action supports the `data` property which is
+---preserved between a `textDocument/publishDiagnostics` and
+---`textDocument/codeAction` request.
+---
+---since 3.16.0
+---@field dataSupport? boolean
+
+---@class lsp.protocol.client.FoldingRangeFoldingRangeClientCapabilities
+---If set, the client signals that it supports setting collapsedText on
+---folding ranges to display custom labels instead of the default text.
+---
+---since 3.17.0
+---@field collapsedText? boolean
+
+---@class lsp.protocol.client.FoldingRangeClientCapabilities
+---Whether implementation supports dynamic registration for folding range
+---providers. If this is set to `true` the client supports the new
+---`FoldingRangeRegistrationOptions` return value for the corresponding
+---server capability as well.
+---@field dynamicRegistration? boolean
+---The maximum number of folding ranges that the client prefers to receive
+---per document. The value serves as a hint, servers are free to follow the
+---limit.
+---@field rangeLimit? uinteger
+---If set, the client signals that it only supports folding complete lines.
+---If set, client will ignore specified `startCharacter` and `endCharacter`
+---properties in a FoldingRange.
+---@field lineFoldingOnly? boolean
+---Specific options for the folding range kind.
+---
+---since 3.17.0
+---@field foldingRangeKind? lsp.protocol.client.ValueSet<lsp.protocol.FoldingRangeKind>
+---Specific options for the folding range.
+---since 3.17.0
+---@field foldingRange lsp.protocol.client.FoldingRangeFoldingRangeClientCapabilities
+
+---@class lsp.protocol.client.SelectionRangeClientCapabilities
+---Whether implementation supports dynamic registration for selection range
+---providers. If this is set to `true` the client supports the new
+---`SelectionRangeRegistrationOptions` return value for the corresponding
+---server capability as well.
+---@field dynamicRegistration? boolean
+
+---@class lsp.protocol.client.LinkedEditingRangeClientCapabilities
+---Whether the implementation supports dynamic registration.
+---If this is set to `true` the client supports the new
+---`(TextDocumentRegistrationOptions & StaticRegistrationOptions)`
+---return value for the corresponding server capability as well.
+---@field dynamicRegistration? boolean
+
+---@class lsp.protocol.client.CallHierarchyClientCapabilities
+---Whether implementation supports dynamic registration. If this is set to
+---`true` the client supports the new `(TextDocumentRegistrationOptions &
+---StaticRegistrationOptions)` return value for the corresponding server
+---capability as well.
+---@field dynamicRegistration? boolean
+
+---@class lsp.protocol.client.RequestsDeltaSemanticTokensClientCapabilities
+---The client will send the `textDocument/semanticTokens/full/delta`
+---request if the server provides a corresponding handler.
+---@field delta? boolean
+
+---@class lsp.protocol.client.RequestsSemanticTokensClientCapabilities
+---The client will send the `textDocument/semanticTokens/range` request
+---if the server provides a corresponding handler.
+---@field range? boolean | table
+---The client will send the `textDocument/semanticTokens/full` request
+---if the server provides a corresponding handler.
+---@field full? boolean | lsp.protocol.client.RequestsDeltaSemanticTokensClientCapabilities
+
+---@class lsp.protocol.client.SemanticTokensClientCapabilities
+---Whether implementation supports dynamic registration. If this is set to
+---`true` the client supports the new `(TextDocumentRegistrationOptions &
+---StaticRegistrationOptions)` return value for the corresponding server
+---capability as well.
+---@field dynamicRegistration? boolean
+---Which requests the client supports and might send to the server
+---depending on the server's capability. Please note that clients might not
+---show semantic tokens or degrade some of the user experience if a range
+---or full request is advertised by the client but not provided by the
+---server. If for example the client capability `requests.full` and
+---`request.range` are both set to true but the server only provides a
+---range provider the client might not render a minimap correctly or might
+---even decide to not show any semantic tokens at all.
+---@field requests lsp.protocol.client.RequestsSemanticTokensClientCapabilities
+---The token types that the client supports.
+---@field tokenTypes string[]
+---The token modifiers that the client supports.
+---@field tokenModifiers string[]
+---The formats the clients supports.
+---@field formats lsp.protocol.TokenFormat[]
+---Whether the client supports tokens that can overlap each other.
+---@field overlappingTokenSupport? boolean
+---Whether the client supports tokens that can span multiple lines.
+---@field multilineTokenSupport? boolean
+---Whether the client allows the server to actively cancel a
+---semantic token request, e.g. supports returning
+---ErrorCodes.ServerCancelled. If a server does the client
+---needs to retrigger the request.
+---
+---since 3.17.0
+---@field serverCancelSupport? boolean
+---Whether the client uses semantic tokens to augment existing
+---syntax tokens. If set to `true` client side created syntax
+---tokens and semantic tokens are both used for colorization. If
+---set to `false` the client only uses the returned semantic tokens
+---for colorization.
+---
+---If the value is `undefined` then the client behavior is not
+---specified.
+---
+---since 3.17.0
+---@field augmentsSyntaxTokens? boolean
+
+---@class lsp.protocol.client.MonikerClientCapabilities
+---Whether implementation supports dynamic registration. If this is set to
+---`true` the client supports the new `(TextDocumentRegistrationOptions &
+---StaticRegistrationOptions)` return value for the corresponding server
+---capability as well.
+---@field dynamicRegistration? boolean
+
+---@class lsp.protocol.client.TypeHierarchyClientCapabilities
+---Whether implementation supports dynamic registration. If this is set to
+---`true` the client supports the new `(TextDocumentRegistrationOptions &
+---StaticRegistrationOptions)` return value for the corresponding server
+---capability as well.
+---@field dynamicRegistration? boolean
+
+---Client capabilities specific to inline values.
+---
+---since 3.17.0
+---@class lsp.protocol.client.InlineValueClientCapabilities
+---Whether implementation supports dynamic registration for inline
+---value providers.
+---@field dynamicRegistration? boolean
+
+---Inlay hint client capabilities.
+---
+---since 3.17.0
+---@class lsp.protocol.client.InlayHintClientCapabilities
+---Whether inlay hints support dynamic registration.
+---@field dynamicRegistration? boolean
+---Indicates which properties a client can resolve lazily on an inlay
+---hint.
+---@field resolveSupport lsp.protocol.client.Properties<string>
+
+---Client capabilities specific to diagnostic pull requests.
+---
+---since 3.17.0
+---@class lsp.protocol.client.DiagnosticClientCapabilities
+---Whether implementation supports dynamic registration. If this is set to
+---`true` the client supports the new
+---`(TextDocumentRegistrationOptions & StaticRegistrationOptions)`
+---return value for the corresponding server capability as well.
+---@field dynamicRegistration? boolean
+---Whether the clients supports related documents for document diagnostic
+---pulls.
+---@field relatedDocumentSupport? boolean
+
+---TextDocumentClientCapabilities define capabilities the editor / tool
+---provides on text documents.
+---
+---Text document specific client capabilities.
+---@class lsp.protocol.client.TextDocumentClientCapabilities
+---@field synchronization? lsp.protocol.client.TextDocumentSyncClientCapabilities
+---Capabilities specific to the `textDocument/completion` request.
+---@field completion? lsp.protocol.client.CompletionClientCapabilities
+---Capabilities specific to the `textDocument/hover` request.
+---@field hover? lsp.protocol.client.HoverClientCapabilities
+---Capabilities specific to the `textDocument/signatureHelp` request.
+---@field signatureHelp? lsp.protocol.client.SignatureHelpClientCapabilities
+---Capabilities specific to the `textDocument/declaration` request.
+---
+---since 3.14.0
+---@field declaration? lsp.protocol.client.DeclarationClientCapabilities
+---Capabilities specific to the `textDocument/definition` request.
+---@field definition? lsp.protocol.client.DefinitionClientCapabilities
+---Capabilities specific to the `textDocument/typeDefinition` request.
+---
+---since 3.6.0
+---@field typeDefinition? lsp.protocol.client.TypeDefinitionClientCapabilities
+---Capabilities specific to the `textDocument/implementation` request.
+---
+---since 3.6.0
+---@field implementation? lsp.protocol.client.ImplementationClientCapabilities
+---Capabilities specific to the `textDocument/references` request.
+---@field references? lsp.protocol.client.ReferenceClientCapabilities
+---Capabilities specific to the `textDocument/documentHighlight` request.
+---@field documentHighlight? lsp.protocol.client.DocumentHighlightClientCapabilities
+---Capabilities specific to the `textDocument/documentSymbol` request.
+---@field documentSymbol? lsp.protocol.client.DocumentSymbolClientCapabilities
+---Capabilities specific to the `textDocument/codeAction` request.
+---@field codeAction? lsp.protocol.client.CodeActionClientCapabilities
+---Capabilities specific to the `textDocument/codeLens` request.
+---@field codeLens? lsp.protocol.client.CodeLensClientCapabilities
+---Capabilities specific to the `textDocument/documentLink` request.
+---@field documentLink? lsp.protocol.client.DocumentLinkClientCapabilities
+---Capabilities specific to the `textDocument/documentColor` and the
+---`textDocument/colorPresentation` request.
+---
+---since 3.6.0
+---@field colorProvider? lsp.protocol.client.DocumentColorClientCapabilities
+---Capabilities specific to the `textDocument/formatting` request.
+---@field formatting? lsp.protocol.client.DocumentFormattingClientCapabilities
+---Capabilities specific to the `textDocument/rangeFormatting` request.
+---@field rangeFormatting? lsp.protocol.client.DocumentRangeFormattingClientCapabilities
+---Capabilities specific to the `textDocument/onTypeFormatting` request.
+---@field onTypeFormatting? lsp.protocol.client.DocumentOnTypeFormattingClientCapabilities
+---Capabilities specific to the `textDocument/rename` request.
+---@field rename? lsp.protocol.client.RenameClientCapabilities
+---Capabilities specific to the `textDocument/publishDiagnostics`
+---notification.
+---@field publishDiagnostics? lsp.protocol.client.PublishDiagnosticsClientCapabilities
+---Capabilities specific to the `textDocument/foldingRange` request.
+---
+---since 3.10.0
+---@field foldingRange? lsp.protocol.client.FoldingRangeClientCapabilities
+---Capabilities specific to the `textDocument/selectionRange` request.
+---
+---since 3.15.0
+---@field selectionRange? lsp.protocol.client.SelectionRangeClientCapabilities
+---Capabilities specific to the `textDocument/linkedEditingRange` request.
+---
+---since 3.16.0
+---@field linkedEditingRange? lsp.protocol.client.LinkedEditingRangeClientCapabilities
+---Capabilities specific to the various call hierarchy requests.
+---
+---since 3.16.0
+---@field callHierarchy? lsp.protocol.client.CallHierarchyClientCapabilities
+---Capabilities specific to the various semantic token requests.
+---
+---since 3.16.0
+---@field semanticTokens? lsp.protocol.client.SemanticTokensClientCapabilities
+---Capabilities specific to the `textDocument/moniker` request.
+---
+---since 3.16.0
+---@field moniker? lsp.protocol.client.MonikerClientCapabilities
+---Capabilities specific to the various type hierarchy requests.
+---
+---since 3.17.0
+---@field typeHierarchy? lsp.protocol.client.TypeHierarchyClientCapabilities
+---Capabilities specific to the `textDocument/inlineValue` request.
+---
+---since 3.17.0
+---@field inlineValue? lsp.protocol.client.InlineValueClientCapabilities
+---Capabilities specific to the `textDocument/inlayHint` request.
+---
+---since 3.17.0
+---@field inlayHint? lsp.protocol.client.InlayHintClientCapabilities
+---Capabilities specific to the diagnostic pull model.
+---
+---since 3.17.0
+---@field diagnostic? lsp.protocol.client.DiagnosticClientCapabilities
+
+
+---The following client capabilities are defined for notebook documents:
+---
+--- property name (optional): notebookDocument.synchronization
+--- property type: NotebookDocumentSyncClientCapabilities defined as follows
+---
+---Notebook specific client capabilities.
+---
+---@since 3.17.0
+---@class lsp.protocol.client.NotebookDocumentSyncClientCapabilities
+---Whether implementation supports dynamic registration. If this is
+---set to `true` the client supports the new
+---`(NotebookDocumentSyncRegistrationOptions & NotebookDocumentSyncOptions)`
+---return value for the corresponding server capability as well.
+---@field dynamicRegistration? boolean
+---The client supports sending execution summary data per cell.
+---@field executionSummarySupport? boolean
+
+---NotebookDocumentClientCapabilities define capabilities the editor / tool
+---provides on notebook documents.
+---
+---Capabilities specific to the notebook document support.
+---
+---since 3.17.0
+---@class lsp.protocol.client.NotebookDocumentClientCapabilities
+---Capabilities specific to notebook document synchronization
+---
+---since 3.17.0
+---@field synchronization lsp.protocol.client.NotebookDocumentSyncClientCapabilities
+
+---@class lsp.protocol.client.MessageActionItemShowMessageRequestClientCapabilities
+---Whether the client supports additional attributes which
+---are preserved and sent back to the server in the
+---request's response.
+---@field additionalPropertiesSupport? boolean
+
+---Show message request client capabilities
+---@class lsp.protocol.client.ShowMessageRequestClientCapabilities
+---Capabilities specific to the `MessageActionItem` type.
+---@field messageActionItem? lsp.protocol.client.MessageActionItemShowMessageRequestClientCapabilities
+
+---Client capabilities for the show document request.
+---
+---since 3.16.0
+---@class lsp.protocol.client.ShowDocumentClientCapabilities
+---The client has support for the show document
+---request.
+---@field support boolean
+
+---Window client capabilities.
+---@class lsp.protocol.client.WindowClientCapabilities
+---It indicates whether the client supports server initiated
+---progress using the `window/workDoneProgress/create` request.
+---
+---The capability also controls Whether client supports handling
+---of progress notifications. If set servers are allowed to report a
+---`workDoneProgress` property in the request specific server
+---capabilities.
+---
+---since 3.15.0
+---@field workDoneProgress? boolean
+---Capabilities specific to the showMessage request
+---
+---since 3.16.0
+---@field showMessage? lsp.protocol.client.ShowMessageRequestClientCapabilities
+---Client capabilities for the show document request.
+---
+---since 3.16.0
+---@field showDocument? lsp.protocol.client.ShowDocumentClientCapabilities
+
+
+---Stale requests general client capabilities.
+---@class lsp.protocol.client.GeneralStaleRequestClientCapabilities
+---The client will actively cancel the request.
+---@field cancel boolean
+---The list of requests for which the client
+---will retry the request if it receives a
+---response with error code `ContentModified``
+---@field retryOnContentModified string[]
+
+---Client capabilities specific to regular expressions.
+---@class lsp.protocol.client.RegularExpressionsClientCapabilities
+---The engine's name.
+---@field engine string
+---The engine's version.
+---@field version? string
+
+---Client capabilities specific to the used markdown parser.
+---
+---since 3.16.0
+---@class lsp.protocol.client.MarkdownClientCapabilities
+---The name of the parser.
+---@field parser string
+---The version of the parser.
+---@field version? string
+---A list of HTML tags that the client allows / supports in
+---Markdown.
+---
+---since 3.17.0
+---@field allowedTags? string[]
+
+---General client capabilities.
+---@class lsp.protocol.client.GeneralClientCapabilities
+---Client capability that signals how the client
+---handles stale requests (e.g. a request
+---for which the client will not process the response
+---anymore since the information is outdated).
+----
+---since 3.17.0
+---@field staleRequestSupport? lsp.protocol.client.GeneralStaleRequestClientCapabilities
+---Client capabilities specific to regular expressions.
+---
+---since 3.16.0
+---@field regularExpressions? lsp.protocol.client.RegularExpressionsClientCapabilities
+---Client capabilities specific to the client's markdown parser.
+---
+---since 3.16.0
+---@field markdown? lsp.protocol.client.MarkdownClientCapabilities
+---The position encodings supported by the client. Client and server
+---have to agree on the same position encoding to ensure that offsets
+---(e.g. character position in a line) are interpreted the same on both
+---side.
+---
+---To keep the protocol backwards compatible the following applies: if
+---the value 'utf-16' is missing from the array of position encodings
+---servers can assume that the client supports UTF-16. UTF-16 is
+---therefore a mandatory encoding.
+---
+---If omitted it defaults to ['utf-16'].
+---
+---Implementation considerations: since the conversion from one encoding
+---into another requires the content of the file / line the conversion
+---is best done where the file is read which is usually on the server
+---side.
+---
+---since 3.17.0
+---@field positionEncodings? lsp.protocol.PositionEncodingKind[]
+
+
+---ClientCapabilities define capabilities for dynamic registration, workspace
+---and text document features the client supports. The experimental can be
+---used to pass experimental capabilities under development. For future
+---compatibility a ClientCapabilities object literal can have more properties
+---set than currently defined. Servers receiving a ClientCapabilities object
+---literal with unknown properties should ignore these properties. A missing
+---property should be interpreted as an absence of the capability. If a missing
+---property normally defines sub properties, all missing sub properties should
+---be interpreted as an absence of the corresponding capability.
+---
+---Client capabilities got introduced with version 3.0 of the protocol. They
+---therefore only describe capabilities that got introduced in 3.x or later.
+---Capabilities that existed in the 2.x version of the protocol are still
+---mandatory for clients. Clients cannot opt out of providing them. So even if
+---a client omits the ClientCapabilities.textDocument.synchronization it is
+---still required that the client provides text document synchronization (e.g.
+---open, changed and close notifications).
+---@class lsp.protocol.client.ClientCapabilities
+---Workspace specific client capabilities.
+---@field workspace? lsp.protocol.client.WorkspaceClientCapabilities
+---Text document specific client capabilities.
+---@field textDocument? lsp.protocol.client.TextDocumentClientCapabilities
+---Capabilities specific to the notebook document support.
+---
+---since 3.17.0
+---@field notebookDocument? lsp.protocol.client.NotebookDocumentClientCapabilities
+---Window specific client capabilities.
+---@field window? lsp.protocol.client.WindowClientCapabilities
+---General client capabilities.
+---
+---since 3.16.0
+---@field general? lsp.protocol.client.GeneralClientCapabilities
+---Experimental client capabilities.
+---@field experimental? lsp.protocol.LSPAny
+
+
+return client
