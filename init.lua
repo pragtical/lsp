@@ -33,6 +33,7 @@ local util = require "plugins.lsp.util"
 local listbox = require "plugins.lsp.listbox"
 local protocol = require "plugins.lsp.protocol"
 local diagnostics = require "plugins.lsp.diagnostics"
+local workspaceedit = require "plugins.lsp.workspaceedit"
 local Server = require "plugins.lsp.server"
 local Timer = require "plugins.lsp.timer"
 local RenameSymbol = require "plugins.lsp.ui.renamesymbol"
@@ -45,6 +46,7 @@ local snippets_found, snippets = pcall(require, "plugins.snippets")
 ---@alias lsp.plugin.locationlist lsp.plugin.location[]
 ---@alias lsp.plugin.symbollist lsp.protocol.DocumentSymbol[] | lsp.protocol.SymbolInformation[]
 ---@alias lsp.plugin.textedit lsp.protocol.TextEdit | lsp.protocol.InsertReplaceEdit
+---@alias lsp.plugin.codeaction lsp.protocol.CodeAction | lsp.protocol.Command
 
 ---@class lsp.plugin.contentchange
 ---@field range lsp.protocol.Range
@@ -367,6 +369,83 @@ local function get_buffer_position_params(doc, line, col)
   }
 end
 
+---Generate an lsp text document range object.
+---@param doc core.doc
+---@param line1 integer
+---@param col1 integer
+---@param line2 integer
+---@param col2 integer
+---@return lsp.protocol.CodeActionParams
+local function get_buffer_range_params(doc, line1, col1, line2, col2)
+  if line2 < line1 or (line2 == line1 and col2 < col1) then
+    line1, col1, line2, col2 = line2, col2, line1, col1
+  end
+
+  return {
+    textDocument = {
+      uri = util.touri(core.project_absolute_path(doc.filename)),
+    },
+    range = {
+      start = {
+        line = line1 - 1,
+        character = util.doc_utf8_to_utf16(doc, line1, col1) - 1
+      },
+      ["end"] = {
+        line = line2 - 1,
+        character = util.doc_utf8_to_utf16(doc, line2, col2) - 1
+      }
+    },
+    context = {
+      diagnostics = {}
+    }
+  }
+end
+
+---@param a lsp.protocol.Position
+---@param b lsp.protocol.Position
+local function position_le(a, b)
+  return a.line < b.line or (a.line == b.line and a.character <= b.character)
+end
+
+---@param range lsp.protocol.Range
+---@param diagnostic lsp.protocol.Diagnostic
+local function range_intersects_diagnostic(range, diagnostic)
+  local d_range = diagnostic.range
+  return position_le(range.start, d_range["end"])
+    and position_le(d_range.start, range["end"])
+end
+
+---Collect document diagnostics that overlap a range.
+---@param doc core.doc
+---@param range lsp.protocol.Range
+---@return lsp.protocol.Diagnostic[]
+local function get_code_action_diagnostics(doc, range)
+  local diagnostic_messages = diagnostics.get(doc.filename)
+    or diagnostics.get(core.project_absolute_path(doc.filename))
+    or diagnostics.get(core.normalize_to_project_dir(doc.abs_filename or doc.filename))
+  local result = {}
+
+  for _, diagnostic in ipairs(diagnostic_messages or {}) do
+    if range_intersects_diagnostic(range, diagnostic) then
+      table.insert(result, diagnostic)
+    end
+  end
+
+  return result
+end
+
+---Check if the current document range has diagnostics that can drive actions.
+---@param doc core.doc
+---@param line1 integer
+---@param col1 integer
+---@param line2 integer
+---@param col2 integer
+---@return boolean
+local function has_code_action_diagnostics(doc, line1, col1, line2, col2)
+  local request_params = get_buffer_range_params(doc, line1, col1, line2, col2)
+  return #get_code_action_diagnostics(doc, request_params.range) > 0
+end
+
 ---Recursive function to generate a list of symbols ready
 ---to use for the lsp.request_document_symbols() action.
 ---@param list lsp.plugin.symbollist
@@ -496,14 +575,16 @@ local function get_references_lists(locations)
   return references, reference_names
 end
 
----Apply an lsp textEdit to a document if possible.
+---Apply a completion text edit to a document if possible.
 ---@param server lsp.server
 ---@param doc core.doc
 ---@param text_edit lsp.plugin.textedit
 ---@param is_snippet boolean
 ---@param update_cursor_position boolean
 ---@return boolean True on success
-local function apply_edit(server, doc, text_edit, is_snippet, update_cursor_position)
+local function apply_completion_edit(
+  server, doc, text_edit, is_snippet, update_cursor_position
+)
   local range = nil
 
   if text_edit.range then
@@ -517,22 +598,8 @@ local function apply_edit(server, doc, text_edit, is_snippet, update_cursor_posi
   if not range then return false end
 
   local text = text_edit.newText
-  local line1, col1, line2, col2
+  local line1, col1, line2, col2 = util.toselection(range, doc)
   local current_text = ""
-
-  if
-    not server.capabilities.positionEncoding
-    or
-    server.capabilities.positionEncoding == protocol.PositionEncodingKind.UTF16
-  then
-    line1, col1, line2, col2 = util.toselection(range, doc)
-  else
-    line1, col1, line2, col2 = util.toselection(range)
-    core.error(
-      "[LSP] Unsupported position encoding: ",
-      server.capabilities.positionEncoding
-    )
-  end
 
   if lsp.in_trigger then
     local cline2, ccol2 = doc:get_selection()
@@ -548,7 +615,10 @@ local function apply_edit(server, doc, text_edit, is_snippet, update_cursor_posi
     return true
   end
 
-  doc:insert(line1, col1, text)
+  if not workspaceedit.apply_text_edit(server, doc, text_edit, #current_text) then
+    return false
+  end
+
   if update_cursor_position then
     doc:move_to_cursor(nil, #text)
   end
@@ -636,7 +706,7 @@ local function autocomplete_onselect(index, item)
       end
       local is_snippet = completion.insertTextFormat
         and completion.insertTextFormat == protocol.InsertTextFormat.Snippet
-      edit_applied = apply_edit(
+      edit_applied = apply_completion_edit(
         item.data.server, dv.doc, completion.textEdit, is_snippet, true
       )
       if edit_applied then
@@ -684,10 +754,9 @@ local function autocomplete_onselect(index, item)
     -- edits first and update completion item range before insert
     core.add_thread(function()
       while not item.data.resolved do coroutine.yield() end
-      for i=#completion.additionalTextEdits, 1, -1 do
-        local edit = completion.additionalTextEdits[i]
-        apply_edit(item.data.server, dv.doc, edit, false, false)
-      end
+      workspaceedit.apply_text_edits(
+        item.data.server, dv.doc, completion.additionalTextEdits
+      )
     end)
   end
   return edit_applied
@@ -1052,6 +1121,21 @@ function lsp.start_server(filename, project_directory)
             end
 
             server:push_response(request.method, request.id, {success=true})
+          end
+        )
+
+        client:add_request_listener(
+          "workspace/applyEdit",
+          function(server, request)
+            ---@type lsp.protocol.ApplyWorkspaceEditParams
+            local params = request.params
+            local applied = lsp.apply_workspace_edit(server, params.edit)
+            ---@type lsp.protocol.ApplyWorkspaceEditResult
+            local result = { applied = applied }
+            if not applied then
+              result.failureReason = "Could not apply workspace edit"
+            end
+            server:push_response(request.method, request.id, result)
           end
         )
 
@@ -1903,6 +1987,176 @@ function lsp.request_symbol_rename(doc, line, col, new_name)
   end
 end
 
+---Apply a workspace edit returned by a server.
+---@param server lsp.server
+---@param edit lsp.protocol.WorkspaceEdit
+---@return boolean
+function lsp.apply_workspace_edit(server, edit)
+  return workspaceedit.apply_workspace_edit(server, edit)
+end
+
+---Execute a command returned by a code action.
+---@param server lsp.server
+---@param lsp_command lsp.protocol.Command
+function lsp.execute_command(server, lsp_command)
+  if not lsp_command or not lsp_command.command then return end
+  if not server.capabilities.executeCommandProvider then
+    core.warn("[LSP] Execute command not supported by %s.", server.name)
+    return
+  end
+
+  server:push_request("workspace/executeCommand", {
+    params = {
+      command = lsp_command.command,
+      arguments = lsp_command.arguments
+    },
+    callback = function(server, response)
+      if response.error and response.error.message then
+        core.error("[LSP] %s", response.error.message)
+      elseif
+        response.result
+        and
+        (response.result.changes or response.result.documentChanges)
+      then
+        ---@cast response.result lsp.protocol.WorkspaceEdit
+        lsp.apply_workspace_edit(server, response.result)
+      end
+    end
+  })
+end
+
+---Apply a selected code action.
+---@param server lsp.server
+---@param action lsp.plugin.codeaction
+function lsp.apply_code_action(server, action)
+  if action.disabled then
+    core.warn("[LSP] Code action disabled: %s", action.disabled.reason)
+    return
+  end
+
+  local provider = server.capabilities.codeActionProvider
+  if
+    type(provider) == "table"
+    and provider.resolveProvider
+    and not action._lsp_resolved
+    and not action.edit
+    and not action.command
+  then
+    server:push_request("codeAction/resolve", {
+      params = action,
+      callback = function(server, response)
+        if response.error and response.error.message then
+          core.error("[LSP] %s", response.error.message)
+        elseif response.result then
+          ---@cast response.result lsp.protocol.CodeAction
+          response.result._lsp_resolved = true
+          lsp.apply_code_action(server, response.result)
+        end
+      end
+    })
+    return
+  end
+
+  if action.edit then
+    workspaceedit.apply_workspace_edit(server, action.edit)
+  end
+
+  if action.command then
+    if type(action.command) == "table" then
+      lsp.execute_command(server, action.command)
+    elseif type(action.command) == "string" then
+      ---@cast action lsp.protocol.Command
+      lsp.execute_command(server, action)
+    end
+  end
+end
+
+local function show_code_actions(server, actions)
+  local indexes, captions = {}, {}
+
+  for index, action in ipairs(actions) do
+    local caption = action.title
+    if action.disabled then
+      caption = caption .. " (disabled)"
+    elseif action.isPreferred then
+      caption = caption .. " (preferred)"
+    end
+    captions[index] = caption
+    indexes[caption] = index
+  end
+
+  core.command_view:enter("Code Action", {
+    submit = function(text, item)
+      if item then
+        lsp.apply_code_action(server, actions[item.index])
+      end
+    end,
+    suggest = function(text)
+      local res = common.fuzzy_match(captions, text)
+      for i, name in ipairs(res) do
+        local action = actions[indexes[name]]
+        res[i] = {
+          text = action.title,
+          info = action.disabled and action.disabled.reason
+            or action.kind
+            or (type(action.command) == "string" and action.command)
+            or (
+              type(action.command) == "table"
+              and action.command.command
+            )
+            or "",
+          index = indexes[name]
+        }
+      end
+      return res
+    end
+  })
+end
+
+---Sends a request to applicable LSP servers for code actions.
+---@param doc core.doc
+---@param line1 integer
+---@param col1 integer
+---@param line2 integer
+---@param col2 integer
+function lsp.request_code_actions(doc, line1, col1, line2, col2)
+  if not doc.lsp_open then return end
+
+  local servers_found = false
+  for _, name in pairs(lsp.get_active_servers(doc.filename, true)) do
+    servers_found = true
+    local server = lsp.servers_running[name]
+    if server.capabilities.codeActionProvider then
+      local request_params = get_buffer_range_params(doc, line1, col1, line2, col2)
+      request_params.context.diagnostics = get_code_action_diagnostics(
+        doc, request_params.range
+      )
+      request_params.context.triggerKind = protocol.CodeActionTriggerKind.Invoked
+
+      server:push_request("textDocument/codeAction", {
+        params = request_params,
+        callback = function(server, response)
+          if response.error and response.error.message then
+            core.error("[LSP] %s", response.error.message)
+          elseif response.result and #response.result > 0 then
+            ---@cast response.result lsp.plugin.codeaction[]
+            show_code_actions(server, response.result)
+          else
+            core.log("[LSP] No code actions found.")
+          end
+        end
+      })
+      return
+    end
+  end
+
+  if not servers_found then
+    core.log("[LSP] " .. "No server ready or running")
+  else
+    core.log("[LSP] " .. "Code actions not supported")
+  end
+end
+
 ---Sends a request to applicable LSP servers to search for symbol on workspace.
 ---@param doc core.doc
 ---@param symbol string
@@ -2058,14 +2312,7 @@ function lsp.request_document_format(doc, on_save)
             log(server, "Error formatting: " .. response.error.message)
           elseif response.result and #response.result > 0 then
             ---@cast response.result lsp.protocol.TextEdit[]
-            -- Apply edits in reverse, as the ranges don't consider
-            -- the intermediate states.
-            -- Consider the TextEdits as already sorted.
-            -- If there are servers that don't sort their TextEdits,
-            -- we'll add sorting code.
-            for i=#response.result,1,-1 do
-              apply_edit(server, doc, response.result[i], false, false)
-            end
+            workspaceedit.apply_text_edits(server, doc, response.result)
             log(server, "Formatted document")
             if on_save then
               doc:save(doc.filename, doc.abs_filename)
@@ -2711,6 +2958,11 @@ command.add(
     end
   end,
 
+  ["lsp:code-action"] = function(doc)
+    local line1, col1, line2, col2 = doc:get_selection()
+    lsp.request_code_actions(doc, line1, col1, line2, col2)
+  end,
+
   ["lsp:view-document-symbols"] = function(doc)
     lsp.request_document_symbols(doc)
   end,
@@ -2835,7 +3087,8 @@ keymap.add {
   ["ctrl+alt+e"]        = "lsp:view-all-diagnostics",
   ["alt+shift+e"]       = "lsp:toggle-diagnostics",
   ["alt+shift+\\"]      = "lsp:toggle-symbols-tree",
-  ["alt+c"]             = "lsp:view-call-hierarchy",
+  ["alt+shift+c"]       = "lsp:view-call-hierarchy",
+  ["alt+c"]             = "lsp:code-action",
   ["alt+r"]             = "lsp:rename-symbol",
 }
 
@@ -2876,6 +3129,26 @@ core.add_thread(function()
       return lsp_predicate(nil, nil, true)
     end
 
+    local function lsp_predicate_code_actions()
+      local dv = get_active_docview()
+      if not dv then return false end
+
+      local doc = dv.doc
+      for _, name in pairs(lsp.get_active_servers(doc.filename, true)) do
+        local server = lsp.servers_running[name]
+        if server.capabilities.codeActionProvider then
+          local line1, col1, line2, col2 = doc:get_selection()
+          if line1 == line2 and col1 == col2 then
+            col1 = 1
+            col2 = #(doc.lines[line1] or "") + 1
+          end
+          return has_code_action_diagnostics(doc, line1, col1, line2, col2)
+        end
+      end
+
+      return false
+    end
+
     contextmenu:register(lsp_predicate_symbols, {
       contextmenu.DIVIDER,
       { text = "Show Symbol Info",        command = "lsp:show-symbol-info" },
@@ -2884,6 +3157,11 @@ core.add_thread(function()
       { text = "Goto Implementation",     command = "lsp:goto-implementation" },
       { text = "Find References",         command = "lsp:find-references" },
       { text = "Rename",                  command = "lsp:rename-symbol" },
+    })
+
+    contextmenu:register(lsp_predicate_code_actions, {
+      contextmenu.DIVIDER,
+      { text = "Code Action",             command = "lsp:code-action" },
     })
 
     contextmenu:register(lsp_predicate, {

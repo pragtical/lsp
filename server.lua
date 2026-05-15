@@ -320,7 +320,14 @@ function Server:initialize(workspace, editor_name, editor_version)
       initializationOptions = self.init_options,
       capabilities = util.deep_merge({
         workspace = {
-          configuration = true -- 'workspace/configuration' requests
+          configuration = true, -- 'workspace/configuration' requests
+          applyEdit = true,
+          workspaceEdit = {
+            documentChanges = true,
+            resourceOperations = {"create", "rename", "delete"},
+            failureHandling = "abort"
+          },
+          executeCommand = {}
         },
         textDocument = {
           synchronization = {
@@ -393,15 +400,29 @@ function Server:initialize(workspace, editor_name, editor_version)
           --  dynamicRegistration = false, -- not supported
           --  linkSupport = true
           -- },
-          -- codeAction = {
-          --  dynamicRegistration = false, -- not supported
-          --  codeActionLiteralSupport = {valueSet = {}},
-          --  isPreferredSupport = true,
-          --  disabledSupport = true,
-          --  dataSupport = true,
-          --  resolveSupport = {properties = {}},
-          --  honorsChangeAnnotations = true
-          -- },
+          codeAction = {
+           -- dynamicRegistration = false, -- not supported
+           codeActionLiteralSupport = {
+             codeActionKind = {
+               valueSet = {
+                 protocol.CodeActionKind.Empty,
+                 protocol.CodeActionKind.QuickFix,
+                 protocol.CodeActionKind.Refactor,
+                 protocol.CodeActionKind.RefactorExtract,
+                 protocol.CodeActionKind.RefactorInline,
+                 protocol.CodeActionKind.RefactorRewrite,
+                 protocol.CodeActionKind.Source,
+                 protocol.CodeActionKind.SourceOrganizeImports,
+                 protocol.CodeActionKind.SourceFixAll
+               }
+             }
+           },
+           isPreferredSupport = true,
+           disabledSupport = true,
+           dataSupport = true,
+           resolveSupport = {properties = {"edit", "command"}},
+           honorsChangeAnnotations = false
+          },
           -- codeLens = {dynamicRegistration = false}, -- not supported
           -- documentLink = {
           --  dynamicRegistration = false, -- not supported

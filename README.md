@@ -40,6 +40,7 @@ Stuff that is currently implemented:
 * View/jump to current document symbols (**alt+s**)
 * Find workspace symbols (**alt+shift+s**)
 * View/jump to symbol references (**alt+f**)
+* Request and apply code actions (**alt+c**)
 * View/jump to document diagnostic messages (**alt+e**)
 * Document format (**alt+shift+f**)
 * Optional diagnostics rendering while typing with [lint+]

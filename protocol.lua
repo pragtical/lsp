@@ -276,6 +276,31 @@ local protocol = {}
 ---@field changeAnnotations? table<string,lsp.protocol.ChangeAnnotation>
 
 
+---The parameters passed via a workspace/applyEdit request.
+---@class lsp.protocol.ApplyWorkspaceEditParams
+---An optional label of the workspace edit. This label is presented in the user
+---interface for example on an undo stack to undo the workspace edit.
+---@field label? string
+---The edits to apply.
+---@field edit lsp.protocol.WorkspaceEdit
+
+
+---The result returned from a workspace/applyEdit request.
+---@class lsp.protocol.ApplyWorkspaceEditResult
+---Indicates whether the edit was applied or not.
+---@field applied boolean
+---An optional textual description for why the edit was not applied.
+---@field failureReason? string
+
+
+---The parameters of a workspace/executeCommand request.
+---@class lsp.protocol.ExecuteCommandParams
+---The identifier of the actual command handler.
+---@field command string
+---Arguments that the command should be invoked with.
+---@field arguments? lsp.protocol.LSPAny[]
+
+
 ---Represents a location inside a resource, such as a line inside a text file.
 ---@class lsp.protocol.Location
 ---@field uri lsp.protocol.DocumentURI
