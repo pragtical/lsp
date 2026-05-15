@@ -19,7 +19,7 @@ local snippets = pcall(require, "plugins.snippets") and config.plugins.lsp.snipp
 ---@class lsp.config.options
 ---
 ---Name of server.
----@field name string
+---@field name? string
 ---Main language, eg: C.
 ---Can be a string or a table.
 ---If the table is empty, the file extension will be used instead.
@@ -27,11 +27,18 @@ local snippets = pcall(require, "plugins.snippets") and config.plugins.lsp.snipp
 ---The `pattern` will be matched with the file path.
 ---Will use the `id` of the first `pattern` that matches.
 ---If no pattern matches, the file extension will be used instead.
----@field language string | lsp.server.languagematch[]
+---@field language? string | lsp.server.languagematch[]
 ---File types that are supported by this server.
----@field file_patterns string[]
----LSP command and optional arguments.
----@field command table<integer,string|table>
+---@field file_patterns? string[]
+---LSP command and optional arguments. Set to false on setup overrides to clear
+---a predefined command and connect to an already-running tcp server.
+---@field command? table<integer,string|table>|false
+---Communication backend to use (default: "stdio").
+---@field transport? lsp.transport.kind
+---Host name or address for tcp connections.
+---@field host? string
+---Port for tcp connections.
+---@field port? integer
 ---On Windows, avoid running the LSP server with cmd.exe.
 ---@field windows_skip_cmd? boolean
 ---Enviroment variables to set for the server command.
@@ -72,6 +79,9 @@ local function add_lsp(options)
   return {
     setup = function(user_options)
       local merged_options = util.deep_merge(options, user_options)
+      if merged_options.command == false then
+        merged_options.command = nil
+      end
       if merged_options.on_setup then
         merged_options.on_setup(merged_options)
       end
@@ -140,7 +150,7 @@ lspconfig.clangd = add_lsp {
     "%.cc$", "%.C$", "%.cxx$", "%.c++$", "%.hh$",
     "%.H$", "%.hxx$", "%.h++$", "%.objc$", "%.objcpp$"
   },
-  command = { "clangd", "-background-index" },
+  command = { "clangd", "--background-index" },
   verbose = false
 }
 

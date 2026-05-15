@@ -10,6 +10,7 @@ local core = require "core"
 local json = require "plugins.lsp.json"
 local util = require "plugins.lsp.util"
 local protocol = require "plugins.lsp.protocol"
+local transport = require "plugins.lsp.transport"
 local Object = require "core.object"
 
 ---@alias lsp.server.protocolparams lsp.protocol.LSPArray | lsp.protocol.LSPObject
@@ -56,14 +57,14 @@ local Object = require "core.object"
 ---@field public response_list lsp.protocol.ResponseMessage[]
 ---@field public notification_list lsp.server.request[]
 ---@field public raw_list lsp.server.request[]
----@field public command table<integer, string>
+---@field public command table<integer, string>? 
 ---@field public write_fails integer
 ---@field public write_fails_before_shutdown integer
 ---@field public verbose boolean
 ---@field public initialized boolean
 ---@field public hitrate_list table<string, { count: integer, timestamp: integer }>
 ---@field public requests_per_second integer
----@field public proc process | nil
+---@field public transport lsp.transport | nil
 ---@field public quit_timeout number
 ---@field public exit_timer lsp.timer | nil
 ---@field public capabilities lsp.protocol.server.ServerCapabilities | nil
@@ -73,6 +74,9 @@ local Object = require "core.object"
 ---@field public shutdown_reason string | nil
 ---@field public restarts_count integer
 ---@field public max_restarts integer
+---@field public transport_kind lsp.transport.kind
+---@field public host string | nil
+---@field public port integer | nil
 local Server = Object:extend()
 
 ---LSP Server constructor options
@@ -90,7 +94,13 @@ local Server = Object:extend()
 ---Lua patterns to match the language files
 ---@field file_patterns table<integer, string>
 ---Command to launch LSP server and optional arguments
----@field command table<integer, string>
+---@field command? table<integer, string>
+---Communication backend to use (default: "stdio")
+---@field transport? lsp.transport.kind
+---Host name or address to connect to on tcp mode
+---@field host? string
+---TCP port to connect to on tcp mode
+---@field port? integer
 ---On Windows, avoid running the LSP server with cmd.exe (default: false)
 ---@field windows_skip_cmd boolean
 ---Enviroment variables to set for the server command.
@@ -243,6 +253,9 @@ function Server:new(options)
   self.notification_list = {}
   self.raw_list = {}
   self.command = options.command
+  self.transport_kind = options.transport or "stdio"
+  self.host = options.host
+  self.port = options.port
   self.write_fails = 0
   self.fatal_error = false
   self.snippets = options.snippets
@@ -259,15 +272,7 @@ function Server:new(options)
   self.max_restarts = -1
   self.hitrate_list = {}
   self.requests_per_second = options.requests_per_second or 16
-
-  self.proc = process.start(
-    options.command, {
-      stderr = process.REDIRECT_PIPE,
-      -- needed on some not fully implemented lsp servers like psalm
-      cwd = core.root_project().path,
-      env = options.env
-    }
-  )
+  self.transport = transport.new(options)
   self.quit_timeout = options.quit_timeout or 60
   self.exit_timer = nil
   self.capabilities = nil
@@ -276,6 +281,11 @@ function Server:new(options)
   self.incremental_changes = options.incremental_changes or false
 
   self.read_responses_coroutine = nil
+
+  if self.transport.startup_error then
+    self.fatal_error = true
+    self.shutdown_reason = self.transport.startup_error
+  end
 
   if options.on_start then options.on_start(self) end
 end
@@ -601,6 +611,8 @@ end
 ---Sends one of the queued notifications.
 function Server:process_notifications()
   if not self.initialized then return end
+  local ready, pending = self:update_transport()
+  if pending or not ready then return end
 
   -- Clone table as we remove elements while iterating it
   local notifications = {}
@@ -654,6 +666,8 @@ end
 
 ---Sends one of the queued client requests and expires timed out ones.
 function Server:process_requests()
+  local ready, pending = self:update_transport()
+  if pending or not ready then return nil end
   local remove_request = nil
   for index, request in ipairs(self.request_list) do
     if request.times_sent > 0 and request.timestamp < os.time() then
@@ -734,6 +748,8 @@ end
 ---Read the lsp server stdout, parse any responses, requests or
 ---notifications and properly dispatch signals to any listeners.
 function Server:process_responses()
+  local ready, pending = self:update_transport()
+  if pending or not ready then return end
   local responses = self:read_responses(0)
 
   if type(responses) == "table" then
@@ -767,6 +783,8 @@ end
 ---Sends all queued client responses to server.
 function Server:process_client_responses()
   if not self.initialized then return end
+  local ready, pending = self:update_transport()
+  if pending or not ready then return end
 
   ::send_responses::
   for index, response in ipairs(self.response_list) do
@@ -815,6 +833,7 @@ end
 ---because of not flushing the stderr (especially true of clangd).
 ---@param log_errors boolean
 function Server:process_errors(log_errors)
+  self:update_transport()
   local errors = self:read_errors(0)
 
   if #errors > 0 and log_errors then
@@ -832,13 +851,13 @@ end
 ---@return string? errmsg
 function Server:send_data(data)
   local failures, data_len = 0, #data
-  local written, errmsg = self.proc:write(data)
+  local written, errmsg = self.transport:write(data)
   local total_written = written or 0
   local co, is_main = coroutine.running()
   local co_running = (not is_main and co) and true or false
 
   while total_written < data_len and not errmsg do
-    written, errmsg = self.proc:write(data:sub(total_written + 1))
+    written, errmsg = self.transport:write(data:sub(total_written + 1))
     total_written = total_written + (written or 0)
 
     if (not written or written <= 0) and not errmsg and co_running then
@@ -866,6 +885,8 @@ end
 ---usually huge, like the textDocument/didOpen notification.
 function Server:process_raw()
   if not self.initialized then return end
+  local ready, pending = self:update_transport()
+  if pending then return end
 
   -- Wait until everything else is processed to prevent initialization issues
   if
@@ -878,7 +899,7 @@ function Server:process_raw()
     return
   end
 
-  if not self.proc:running() then
+  if not ready then
     self.raw_list = {}
     return
   end
@@ -1171,6 +1192,35 @@ function Server:push_raw(name, options)
   })
 end
 
+---@return boolean ready
+---@return boolean pending
+function Server:update_transport()
+  self.transport:update()
+
+  if self.transport.startup_error then
+    self.fatal_error = true
+    self.shutdown_reason = self.shutdown_reason or self.transport.startup_error
+    self:shutdown_if_needed()
+    return false, false
+  end
+
+  if self.transport:is_starting() then
+    return false, true
+  end
+
+  if not self.transport:is_running() then
+    self.fatal_error = true
+    self.shutdown_reason = self.shutdown_reason or "transport stopped"
+    if not self.initialized then
+      self.max_restarts = 1
+    end
+    self:shutdown_if_needed()
+    return false, false
+  end
+
+  return true, false
+end
+
 ---Retrieve a request and removes it from the internal requests list
 ---@param id integer
 ---@return lsp.server.request | nil
@@ -1189,8 +1239,8 @@ end
 ---@param timeout integer Time in seconds, set to 0 to not wait
 ---@return lsp.server.protocolmessage[]|boolean Responses list or false if failed
 function Server:read_responses(timeout)
-  local proc = self.proc -- save current process to avoid it changing
-  if not proc or not proc:running() then
+  local current_transport = self.transport -- save current transport to avoid it changing
+  if not current_transport or not current_transport:is_running() then
     return false
   end
 
@@ -1199,7 +1249,7 @@ function Server:read_responses(timeout)
       local buffer = ""
       while true do
         -- Read out all the headers
-        local output = buffer .. (proc:read_stdout(Server.BUFFER_SIZE) or "")
+        local output = buffer .. (current_transport:read(Server.BUFFER_SIZE) or "")
         local content_start = output:match("\r\n\r\n()")
         local buf = output
         while not content_start do
@@ -1209,7 +1259,7 @@ function Server:read_responses(timeout)
                                        "Something wrong with the server configuration?\nGot:\n%s", #output, output))
           end
           coroutine.yield(#buf > 0)
-          buf = proc:read_stdout(Server.BUFFER_SIZE)
+          buf = current_transport:read(Server.BUFFER_SIZE)
           if not buf then
             -- If we stopped in the middle of a read, error out
             if #output > 0 then
@@ -1245,7 +1295,7 @@ function Server:read_responses(timeout)
         local content_read_length = #buf
         while content_read_length < content_length do
           coroutine.yield(#buf > 0)
-          buf = proc:read_stdout(Server.BUFFER_SIZE)
+          buf = current_transport:read(Server.BUFFER_SIZE)
           if not buf then
             return error(string.format("Can't continue reading stdout. Stopped at %d/%d.\n%s",
                                        content_read_length, content_length, table.concat(content_data_t)))
@@ -1332,7 +1382,7 @@ function Server:read_errors(timeout)
   if timeout == 0 then max_time = max_time + 1 end
   local output = ""
   while max_time > os.time() and output == "" do
-    output = self.proc:read_stderr(Server.BUFFER_SIZE)
+    output = self.transport:read_stderr(Server.BUFFER_SIZE) or ""
     if timeout == 0 then break end
     if output == "" and inside_coroutine then
       coroutine.yield()
@@ -1342,7 +1392,7 @@ function Server:read_errors(timeout)
   if timeout == 0 and output ~= "" then
     local new_output = nil
     while new_output ~= "" do
-      new_output = self.proc:read_stderr(Server.BUFFER_SIZE)
+      new_output = self.transport:read_stderr(Server.BUFFER_SIZE) or ""
       if new_output ~= "" then
         if new_output == nil then
           break
@@ -1363,7 +1413,7 @@ end
 ---@return boolean written
 ---@return string? errmsg
 function Server:write_request(data)
-  if not self.proc:running() then
+  if not self.transport:is_running() then
     return false
   end
 
@@ -1536,7 +1586,9 @@ end
 ---Kills the server process and deinitialize the server object state.
 function Server:stop()
   self.initialized = false
-  self.proc:kill()
+  if self.transport then
+    self.transport:stop()
+  end
 
   self.request_list = {}
   self.response_list = {}
@@ -1551,7 +1603,7 @@ function Server:shutdown_if_needed()
   if
     self.write_fails >= self.write_fails_before_shutdown
     or
-    (self.proc and not self.proc:running())
+    not self.transport:is_running()
     or
     self.fatal_error
   then

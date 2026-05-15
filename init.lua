@@ -719,7 +719,7 @@ lsp.get_location_preview = get_location_preview
 ---@param options lsp.server.options
 function lsp.add_server(options)
   local required_fields = {
-    "name", "language", "file_patterns", "command"
+    "name", "language", "file_patterns"
   }
 
   for _, field in pairs(required_fields) do
@@ -736,7 +736,20 @@ function lsp.add_server(options)
     options.snippets = true
   end
 
-  if #options.command <= 0 then
+  options.transport = options.transport or "stdio"
+
+  if options.transport == "tcp" then
+    if not options.host or options.host == "" then
+      core.error("[LSP] Provide a host for tcp lsp servers.")
+      return false
+    end
+    if not options.port then
+      core.error("[LSP] Provide a port for tcp lsp servers.")
+      return false
+    end
+  end
+
+  if options.transport == "stdio" and (not options.command or #options.command <= 0) then
     core.error("[LSP] Provide a command table list with the lsp command.")
     return false
   end
@@ -747,7 +760,7 @@ function lsp.add_server(options)
 
   -- some lsp servers may be installed with different binary names
   -- so if command name is a list, search for one that exists
-  if type(options.command[1]) == "table" then
+  if options.command and type(options.command[1]) == "table" then
     options.command[1] = util.get_best_executable(options.command[1])
   end
 
@@ -756,6 +769,7 @@ function lsp.add_server(options)
   -- process termination targets the actual server.
   if
     PLATFORM == "Windows"
+    and options.command
     and not options.windows_skip_cmd
     and not util.win_command_is_executable(options.command[1])
   then
@@ -899,69 +913,76 @@ function lsp.start_server(filename, project_directory)
       end
 
       local command_exists = false
-      if util.command_exists(server.command[1]) then
+      if server.command and server.command[1] then
+        if util.command_exists(server.command[1]) then
+          command_exists = true
+        else
+          table.insert(servers_not_found, name)
+        end
+      elseif server.transport == "tcp" then
         command_exists = true
-      else
-        table.insert(servers_not_found, name)
       end
 
       if not lsp.servers_running[name] and command_exists then
         core.log("[LSP] starting " .. name)
         ---@type lsp.server
         local client = Server(server)
-        client.yield_on_reads = config.plugins.lsp.more_yielding
+        if client.shutdown_reason then
+          core.error("[LSP] %s failed to start: %s", name, client.shutdown_reason)
+        else
+          client.yield_on_reads = config.plugins.lsp.more_yielding
 
-        lsp.servers_running[name] = client
+          lsp.servers_running[name] = client
 
-        -- We overwrite the default log function to log messages on pragtical
-        function client:log(message, ...)
-          core.log_quiet(
-            "[LSP/%s]: " .. message .. "\n",
-            self.name,
-            ...
-          )
-        end
-
-        function client:on_shutdown()
-          local sname = self.name
-          local restarts_count = self.restarts_count or 0
-          local max_restarts = self.max_restarts or -1
-          if self.shutdown_reason then
-            core.log("[LSP]: %s was shutdown: %s", sname, self.shutdown_reason)
-          else
-            core.log(
-              "[LSP]: %s was shutdown, revise your configuration",
-              sname
+          -- We overwrite the default log function to log messages on pragtical
+          function client:log(message, ...)
+            core.log_quiet(
+              "[LSP/%s]: " .. message .. "\n",
+              self.name,
+              ...
             )
           end
-          local last_shutdown = lsp.servers_running[sname] and lsp.servers_running[sname].last_shutdown or 0
-          lsp.servers_running = util.table_remove_key(
-            lsp.servers_running,
-            sname
-          )
-          if max_restarts > -1 and restarts_count >= max_restarts then
-            core.log(
-              "[LSP]: %s reached the maximum amount of automatic restarts",
-              sname
-            )
-            return
-          end
-          if system.get_time() - last_shutdown >= 5 then
-            lsp.start_servers()
-            if lsp.servers_running[sname] then
-              lsp.servers_running[sname].last_shutdown = system.get_time()
-              lsp.servers_running[sname].restarts_count = restarts_count + 1
-              lsp.servers_running[sname].max_restarts = max_restarts
+
+          function client:on_shutdown()
+            local sname = self.name
+            local restarts_count = self.restarts_count or 0
+            local max_restarts = self.max_restarts or -1
+            if self.shutdown_reason then
+              core.log("[LSP]: %s was shutdown: %s", sname, self.shutdown_reason)
+            else
               core.log(
-                "[LSP]: %s automatically restarted",
+                "[LSP]: %s was shutdown, revise your configuration",
                 sname
               )
             end
+            local last_shutdown = lsp.servers_running[sname] and lsp.servers_running[sname].last_shutdown or 0
+            lsp.servers_running = util.table_remove_key(
+              lsp.servers_running,
+              sname
+            )
+            if max_restarts > -1 and restarts_count >= max_restarts then
+              core.log(
+                "[LSP]: %s reached the maximum amount of automatic restarts",
+                sname
+              )
+              return
+            end
+            if system.get_time() - last_shutdown >= 5 then
+              lsp.start_servers()
+              if lsp.servers_running[sname] then
+                lsp.servers_running[sname].last_shutdown = system.get_time()
+                lsp.servers_running[sname].restarts_count = restarts_count + 1
+                lsp.servers_running[sname].max_restarts = max_restarts
+                core.log(
+                  "[LSP]: %s automatically restarted",
+                  sname
+                )
+              end
+            end
           end
-        end
 
-        -- Respond to workspace/configuration request
-        client:add_request_listener(
+          -- Respond to workspace/configuration request
+          client:add_request_listener(
           "workspace/configuration",
           function(server, request)
             ---@type lsp.plugin.workspaceconfigparams
@@ -1127,8 +1148,9 @@ function lsp.start_server(filename, project_directory)
           end
         end)
 
-        -- Start the server initialization process
-        client:initialize(project_directory, "Pragtical", VERSION)
+          -- Start the server initialization process
+          client:initialize(project_directory, "Pragtical", VERSION)
+        end
       end
     end
   end
@@ -1302,6 +1324,8 @@ function lsp.save_document(doc)
             }
           })
         end
+
+        ::continue::
       end
     end
   end

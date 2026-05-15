@@ -97,6 +97,26 @@ lspconfig.intelephense.setup {
     storagePath = "/home/myuser/.cache/intelephense"
   }
 }
+
+-- Connect to a tcp-based language server through a local socat bridge.
+lspconfig.clangd.setup {
+  transport = "tcp",
+  host = "127.0.0.1",
+  port = 7658,
+  command = {
+    "socat",
+    "TCP-LISTEN:7658,reuseaddr,fork",
+    "EXEC:clangd --background-index,pipes"
+  }
+}
+
+-- Connect to an already-running tcp-based language server.
+lspconfig.clangd.setup {
+  transport = "tcp",
+  host = "127.0.0.1",
+  port = 7658,
+  command = false
+}
 ```
 
 If your preferred LSP server is not listed on the config.lua file feel free
@@ -126,6 +146,14 @@ lsp.add_server {
   file_patterns = { "%.php$" },
   -- LSP command and optional arguments
   command = { "intelephense", "--stdio" },
+  -- Communication backend ("stdio" or "tcp")
+  transport = "stdio",
+  -- Host and port are used only on tcp mode
+  -- host = "127.0.0.1",
+  -- port = 7658,
+  -- Set command to false when overriding a predefined config and connecting
+  -- to an already-running tcp server.
+  -- command = false,
   -- Optional table of settings to pass into the lsp
   -- Note that also having a settings.json or settings.lua in
   -- your workspace directory with a table of settings is supported.
