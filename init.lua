@@ -41,6 +41,40 @@ local SymbolsTree = require "plugins.lsp.ui.symbolstree"
 local MessageBox = require "widget.messagebox"
 local snippets_found, snippets = pcall(require, "plugins.snippets")
 
+---@alias lsp.plugin.location lsp.protocol.Location | lsp.protocol.LocationLink
+---@alias lsp.plugin.locationlist lsp.plugin.location[]
+---@alias lsp.plugin.symbollist lsp.protocol.DocumentSymbol[] | lsp.protocol.SymbolInformation[]
+---@alias lsp.plugin.textedit lsp.protocol.TextEdit | lsp.protocol.InsertReplaceEdit
+
+---@class lsp.plugin.contentchange
+---@field range lsp.protocol.Range
+---@field text string
+
+---@class lsp.plugin.positionparams : lsp.protocol.TextDocumentPositionParams
+---@field context? lsp.protocol.CompletionContext | { includeDeclaration: boolean }
+---@field newName? string
+
+---@class lsp.plugin.workspaceconfigitem
+---@field section? string
+---@field scopeUri? lsp.protocol.DocumentUri
+
+---@class lsp.plugin.workspaceconfigparams
+---@field items lsp.plugin.workspaceconfigitem[]
+
+---@class lsp.plugin.showdocumentparams
+---@field external? boolean
+---@field uri lsp.protocol.DocumentUri
+---@field selection? lsp.protocol.Range
+---@field takeFocus? boolean
+
+---@class lsp.plugin.publishdiagnosticsparams
+---@field uri lsp.protocol.DocumentUri
+---@field diagnostics lsp.protocol.Diagnostic[]
+
+---@class lsp.plugin.showmessageparams
+---@field type lsp.protocol.MessageType
+---@field message string
+
 --
 -- Main plugin functionality
 --
@@ -311,6 +345,7 @@ lsp.hover_timer.on_timer = function()
     lsp.hover_position.col
   )
 end
+
 --
 -- Private functions
 --
@@ -319,6 +354,7 @@ end
 ---@param doc core.doc
 ---@param line integer
 ---@param col integer
+---@return lsp.plugin.positionparams
 local function get_buffer_position_params(doc, line, col)
   return {
     textDocument = {
@@ -333,7 +369,7 @@ end
 
 ---Recursive function to generate a list of symbols ready
 ---to use for the lsp.request_document_symbols() action.
----@param list table<integer, table>
+---@param list lsp.plugin.symbollist
 ---@param parent? string
 local function get_symbol_lists(list, parent)
   local symbols = {}
@@ -396,7 +432,7 @@ local function get_active_docview()
 end
 
 ---Generates a code preview of a location
----@param location table
+---@param location lsp.plugin.location
 local function get_location_preview(location)
   local line1, col1 = util.toselection(
     location.range or location.targetRange
@@ -446,7 +482,7 @@ local function get_location_preview(location)
 end
 
 ---Generate a list ready to use for the lsp.request_references() action.
----@param locations table
+---@param locations lsp.plugin.locationlist
 local function get_references_lists(locations)
   local references, reference_names = {}, {}
 
@@ -463,7 +499,7 @@ end
 ---Apply an lsp textEdit to a document if possible.
 ---@param server lsp.server
 ---@param doc core.doc
----@param text_edit table
+---@param text_edit lsp.plugin.textedit
 ---@param is_snippet boolean
 ---@param update_cursor_position boolean
 ---@return boolean True on success
@@ -525,7 +561,7 @@ end
 ---better description of the selected element by requesting the LSP server for
 ---detailed information/documentation.
 ---@param index integer
----@param item table
+---@param item autocomplete.item
 local function autocomplete_onhover(index, item)
   local completion_item = item.data.completion_item
 
@@ -581,7 +617,7 @@ end
 ---Callback that handles insertion of an autocompletion item that has
 ---the information of insertion
 ---@param index integer
----@param item table
+---@param item autocomplete.item
 local function autocomplete_onselect(index, item)
   local completion = item.data.completion_item
   local dv = get_active_docview()
@@ -662,7 +698,7 @@ end
 --
 
 ---Open a document location returned by LSP
----@param location table
+---@param location lsp.plugin.location
 function lsp.goto_location(location)
   local doc_view = core.root_view:open_doc(
     core.open_doc(
@@ -779,7 +815,7 @@ local cached_workspace_settings_timestamp = 0
 ---      on repetitive calls to this function.
 ---@param server lsp.server
 ---@param workspace? string
----@return table
+---@return lsp.protocol.LSPObject
 function lsp.get_workspace_settings(server, workspace)
   -- Search settings on the following directories, subsequent settings
   -- overwrite the previous ones
@@ -928,10 +964,12 @@ function lsp.start_server(filename, project_directory)
         client:add_request_listener(
           "workspace/configuration",
           function(server, request)
+            ---@type lsp.plugin.workspaceconfigparams
+            local params = request.params
             local settings_default = lsp.get_workspace_settings(server)
 
             local settings_list = {}
-            for _, item in pairs(request.params.items) do
+            for _, item in pairs(params.items) do
               local value = nil
               if item.section then
                 -- No workspace was specified so we return from default settings
@@ -962,30 +1000,32 @@ function lsp.start_server(filename, project_directory)
         client:add_request_listener(
           "window/showDocument",
           function(server, request)
-            if request.params.external then
+            ---@type lsp.plugin.showdocumentparams
+            local params = request.params
+            if params.external then
               MessageBox.info(
                 server.name .. " LSP Server",
-                "Wants to externally open:\n'" .. request.params.uri .. "'",
+                "Wants to externally open:\n'" .. params.uri .. "'",
                 function(_, button_id)
                   if button_id == 1 then
-                    util.open_external(request.params.uri)
+                    common.open_in_system(params.uri)
                   end
                 end,
                 MessageBox.BUTTONS_YES_NO
               )
             else
-              local document = util.tofilename(request.params.uri)
+              local document = util.tofilename(params.uri)
               ---@type core.docview
               local doc_view = core.root_view:open_doc(
                 core.open_doc(common.home_expand(document))
               )
-              if request.params.selection then
+              if params.selection then
                 local line1, col1, line2, col2 = util.toselection(
-                  request.params.selection, doc_view.doc
+                  params.selection, doc_view.doc
                 )
                 doc_view.doc:set_selection(line1, col1, line2, col2)
               end
-              if request.params.takeFocus then
+              if params.takeFocus then
                 system.raise_window(core.window)
               end
             end
@@ -998,6 +1038,7 @@ function lsp.start_server(filename, project_directory)
         client:add_message_listener(
           "window/logMessage",
           function(server, params)
+            ---@cast params lsp.plugin.showmessageparams
             if core.log then
               log(server, "%s", params.message)
             end
@@ -1008,6 +1049,7 @@ function lsp.start_server(filename, project_directory)
         client:add_message_listener(
           "textDocument/publishDiagnostics",
           function(server, params)
+            ---@cast params lsp.plugin.publishdiagnosticsparams
             local abs_filename = util.tofilename(params.uri)
             local filename = core.normalize_to_project_dir(abs_filename)
 
@@ -1044,6 +1086,7 @@ function lsp.start_server(filename, project_directory)
         client:add_message_listener(
           "window/showMessage",
           function(server, params)
+            ---@cast params lsp.plugin.showmessageparams
             local log_func = "log_quiet"
             if params.type == protocol.MessageType.Error then
               log_func = "error"
@@ -1470,6 +1513,7 @@ function lsp.request_completion(doc, line, col, forced)
           end
 
           local result = response.result
+          ---@cast result lsp.protocol.CompletionList | lsp.protocol.CompletionItem[]
           local complete_result = true
           if result.isIncomplete then
             if server.verbose then
@@ -1630,6 +1674,7 @@ function lsp.request_signature(doc, line, col, forced, fallback)
             and
             #response.result.signatures > 0
           then
+            ---@cast response.result lsp.protocol.SignatureHelp
             autocomplete.close()
             listbox.show_signatures(response.result)
             lsp.user_typed  = false
@@ -1661,6 +1706,7 @@ function lsp.request_hover(doc, line, col, in_tab)
         params = get_buffer_position_params(doc, line, col),
         callback = function(server, response)
           if response.result and response.result.contents then
+            ---@cast response.result lsp.protocol.Hover
             local content = response.result.contents
             local kind = nil
             local text = ""
@@ -1738,6 +1784,7 @@ function lsp.request_references(doc, line, col)
         params = request_params,
         callback = function(server, response)
           if response.result and #response.result > 0 then
+            ---@cast response.result lsp.plugin.locationlist
             local references, reference_names = get_references_lists(response.result)
             core.command_view:enter("Filter References", {
               submit = function(text, item)
@@ -1812,7 +1859,8 @@ function lsp.request_symbol_rename(doc, line, col, new_name)
       server:push_request('textDocument/rename', {
         params = request_params,
         callback = function(server, response)
-          if response.result and #response.result.changes then
+          if response.result and response.result.changes and next(response.result.changes) then
+            ---@cast response.result lsp.protocol.WorkspaceEdit
             local rename_symbol = RenameSymbol(response.result)
             core.root_view:get_active_node_default():add_view(rename_symbol)
           else
@@ -1850,6 +1898,7 @@ function lsp.request_workspace_symbol(doc, symbol)
         },
         callback = function(server, response)
           if response.result and #response.result > 0 then
+            ---@cast response.result lsp.protocol.WorkspaceSymbol[]
             local rs = SymbolResults(symbol)
             core.root_view:get_active_node_default():add_view(rs)
             for index, result in ipairs(response.result) do
@@ -1894,6 +1943,7 @@ function lsp.request_document_symbols(doc)
         },
         callback = function(server, response)
           if response.result and response.result and #response.result > 0 then
+            ---@cast response.result lsp.plugin.symbollist
             local symbols, symbol_names = get_symbol_lists(response.result)
             core.command_view:enter("Find Symbol", {
               submit = function(text, item)
@@ -1983,6 +2033,7 @@ function lsp.request_document_format(doc, on_save)
           if response.error and response.error.message then
             log(server, "Error formatting: " .. response.error.message)
           elseif response.result and #response.result > 0 then
+            ---@cast response.result lsp.protocol.TextEdit[]
             -- Apply edits in reverse, as the ranges don't consider
             -- the intermediate states.
             -- Consider the TextEdits as already sorted.
@@ -2025,7 +2076,7 @@ function lsp.view_document_diagnostics(doc)
   local indexes, captions = {}, {}
   for index, diagnostic in pairs(diagnostic_messages) do
     local line1, col1 = util.toselection(diagnostic.range)
-    local label = diagnostic_labels[diagnostic.severity or diagnostics.severity.ERROR]
+    local label = diagnostic_labels[diagnostic.severity or protocol.DiagnosticSeverity.Error]
       .. ": " .. diagnostic.message .. " "
       .. tostring(line1) .. ":" .. tostring(col1)
     captions[index] = label
@@ -2046,7 +2097,7 @@ function lsp.view_document_diagnostics(doc)
         local diagnostic = diagnostic_messages[indexes[name]]
         local line1, col1 = util.toselection(diagnostic.range)
         res[i] = {
-          text = diagnostics.lintplus_kinds[diagnostic.severity or diagnostics.severity.ERROR]
+          text = diagnostics.lintplus_kinds[diagnostic.severity or protocol.DiagnosticSeverity.Error]
             .. ": " .. diagnostic.message,
           info = tostring(line1) .. ":" .. tostring(col1),
           index = indexes[name]
@@ -2131,6 +2182,7 @@ function lsp.goto_symbol(doc, line, col, implementation)
         params = get_buffer_position_params(doc, line, col),
         callback = function(server, response)
           local location = response.result
+          ---@cast location lsp.server.locationresult | nil
 
           if not location or not location.uri and #location == 0 then
             core.log("[LSP] No %s found.", method)
@@ -2320,6 +2372,7 @@ local function add_change(self, text, line1, col1, line2, col2)
     self.lsp_version = 0
   end
 
+  ---@type lsp.plugin.contentchange
   local change = { range = {}, text = text}
   change.range["start"] = {line = line1-1, character = col1-1}
   change.range["end"] = {line = line2-1, character = col2-1}

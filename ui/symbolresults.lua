@@ -4,7 +4,6 @@
 -- @license MIT
 --
 
-local core = require "core"
 local style = require "core.style"
 local Widget = require "widget"
 local Label = require "widget.label"
@@ -63,6 +62,7 @@ function SymbolResults:new(symbol)
   self:show()
 end
 
+---@param result lsp.protocol.WorkspaceSymbol
 function SymbolResults:add_result(result)
   local preview, position = Lsp.get_location_preview(result.location)
   local container_name = result.containerName and
@@ -87,6 +87,8 @@ function SymbolResults:stop_searching()
   self.searching = false
 end
 
+---@param idx integer
+---@param data lsp.protocol.WorkspaceSymbol
 function SymbolResults:on_selected(idx, data)
   Lsp.goto_location(data.location)
 end

@@ -137,7 +137,7 @@ function util.file_exists(file_path)
 end
 
 ---Converts the given LSP DocumentUri into a valid filename path.
----@param uri string LSP DocumentUri to convert into a filename.
+---@param uri lsp.protocol.DocumentUri LSP DocumentUri to convert into a filename.
 ---@return string
 function util.tofilename(uri)
   local filename = ""
@@ -159,7 +159,7 @@ end
 
 ---Convert a file path to a LSP valid uri.
 ---@param file_path string
----@return string
+---@return lsp.protocol.DocumentUri
 function util.touri(file_path)
   local function char_escape(char)
     if string.match(char, "[_.~-]") then return char end
@@ -179,7 +179,7 @@ function util.touri(file_path)
 end
 
 ---Converts a document range returned by lsp to a valid document selection.
----@param range table LSP Range.
+---@param range lsp.protocol.Range LSP Range.
 ---@param doc? core.doc
 ---@return integer line1
 ---@return integer col1
@@ -197,30 +197,6 @@ function util.toselection(range, doc)
   end
 
   return line1, col1, line2, col2
-end
-
----Opens the given location on a external application.
----@param location string
-function util.open_external(location)
-  if common.open_in_system then
-    common.open_in_system(location)
-  else -- backward compatibility, should remomve entire function later
-    local filelauncher = ""
-    if PLATFORM == "Windows" then
-      filelauncher = 'start ""'
-    elseif PLATFORM == "Mac OS X" then
-      filelauncher = "open"
-    else
-      filelauncher = "xdg-open"
-    end
-
-    -- non-Windows platforms need the text quoted (%q)
-    if PLATFORM ~= "Windows" then
-      location = string.format("%q", location)
-    end
-
-    system.exec(filelauncher .. " " .. location)
-  end
 end
 
 ---Prettify json output and logs it if config.lsp.log_file is set.
@@ -468,10 +444,10 @@ end
 function util.strip_markdown(text)
   local clean_text = ""
   for match in (text.."\n"):gmatch("(.-)".."\n") do
-    match = match .. "\n"
+    local line = match .. "\n"
 
     -- strip markdown
-    local new_line = match
+    local new_line = line
       -- Block quotes
       :gsub("^>+(%s*)", "%1")
       -- headings

@@ -160,6 +160,7 @@ local function symbols_rename_thread(id, replacement)
 
       for line in file:lines("L") do
         ln = ln + 1
+        local current_line = line
 
         if results.lines[1] and results.lines[1].line == ln then
           local offset = 0
@@ -169,7 +170,7 @@ local function symbols_rename_thread(id, replacement)
             local col2 = pos.col2 + offset
 
             if pos.checked or type(pos.checked) == "nil" then
-              line = replace_substring(line, col1, col2, replacement)
+              current_line = replace_substring(current_line, col1, col2, replacement)
               local current_len = col2 - col1 + 1
               if current_len > replacement_len then
                 offset = offset - (current_len - replacement_len)
@@ -182,7 +183,7 @@ local function symbols_rename_thread(id, replacement)
           table.remove(results.lines, 1)
         end
 
-        table.insert(lines, line)
+        table.insert(lines, current_line)
       end
 
       file:close()

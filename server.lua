@@ -10,13 +10,16 @@ local core = require "core"
 local json = require "plugins.lsp.json"
 local util = require "plugins.lsp.util"
 local protocol = require "plugins.lsp.protocol"
-local diagnostics = require "plugins.lsp.diagnostics"
 local Object = require "core.object"
 
+---@alias lsp.server.protocolparams lsp.protocol.LSPArray | lsp.protocol.LSPObject
+---@alias lsp.server.protocolmessage lsp.protocol.RequestMessage | lsp.protocol.ResponseMessage | lsp.protocol.NotificationMessage
+---@alias lsp.server.locationresult lsp.protocol.Location | lsp.protocol.LocationLink | lsp.protocol.Location[] | lsp.protocol.LocationLink[]
 ---@alias lsp.server.callback fun(server: lsp.server, ...)
 ---@alias lsp.server.timeoutcb fun(server: lsp.server, ...)
----@alias lsp.server.notificationcb fun(server: lsp.server, params: table)
----@alias lsp.server.responsecb fun(server: lsp.server, response: table, request?: lsp.server.request)
+---@alias lsp.server.requestcb fun(server: lsp.server, request: lsp.protocol.RequestMessage)
+---@alias lsp.server.notificationcb fun(server: lsp.server, params: lsp.protocol.LSPAny)
+---@alias lsp.server.responsecb fun(server: lsp.server, response: lsp.protocol.ResponseMessage, request?: lsp.server.request)
 
 ---@class lsp.server.languagematch
 ---@field id string
@@ -25,8 +28,8 @@ local Object = require "core.object"
 ---@class lsp.server.request
 ---@field id integer
 ---@field method string
----@field data table|nil
----@field params table
+---@field data lsp.protocol.LSPAny
+---@field params lsp.server.protocolparams
 ---@field callback? lsp.server.responsecb
 ---@field on_expired? lsp.server.callback
 ---@field overwritten boolean
@@ -42,29 +45,29 @@ local Object = require "core.object"
 ---@class lsp.server : core.object
 ---@field public name string
 ---@field public language string | lsp.server.languagematch[]
----@field public file_patterns table
+---@field public file_patterns table<integer, string>
 ---@field public current_request integer
----@field public init_options table
----@field public settings table | nil
----@field public event_listeners table
----@field public message_listeners table
----@field public request_listeners table
+---@field public init_options lsp.protocol.LSPObject
+---@field public settings lsp.protocol.LSPObject | nil
+---@field public event_listeners table<string, lsp.server.callback[]>
+---@field public message_listeners table<string, lsp.server.notificationcb[]>
+---@field public request_listeners table<string, lsp.server.requestcb[]>
 ---@field public request_list lsp.server.request[]
----@field public response_list table
+---@field public response_list lsp.protocol.ResponseMessage[]
 ---@field public notification_list lsp.server.request[]
 ---@field public raw_list lsp.server.request[]
----@field public command table
+---@field public command table<integer, string>
 ---@field public write_fails integer
 ---@field public write_fails_before_shutdown integer
 ---@field public verbose boolean
 ---@field public initialized boolean
----@field public hitrate_list table
+---@field public hitrate_list table<string, { count: integer, timestamp: integer }>
 ---@field public requests_per_second integer
 ---@field public proc process | nil
 ---@field public quit_timeout number
 ---@field public exit_timer lsp.timer | nil
----@field public capabilities table
----@field public custom_capabilities table
+---@field public capabilities lsp.protocol.server.ServerCapabilities | nil
+---@field public custom_capabilities lsp.protocol.client.ClientCapabilities | lsp.protocol.LSPObject | nil
 ---@field public yield_on_reads boolean
 ---@field public running boolean
 ---@field public shutdown_reason string | nil
@@ -97,11 +100,11 @@ local Server = Object:extend()
 ---Optional table of settings to pass into the lsp
 ---Note that also having a settings.json or settings.lua in
 ---your workspace directory is supported
----@field settings table
+---@field settings lsp.protocol.LSPObject
 ---Optional table of initializationOptions for the LSP
----@field init_options table
+---@field init_options lsp.protocol.LSPObject
 ---Optional table of capabilities that will be merged with our default one
----@field custom_capabilities table
+---@field custom_capabilities lsp.protocol.client.ClientCapabilities | lsp.protocol.LSPObject
 ---Called when the server is started allowing subscription of listeners, etc...
 ---@field on_start? fun(server: lsp.server)
 ---Set by default to 16 should only be modified if having issues with a server
@@ -130,9 +133,9 @@ Server.BUFFER_SIZE = 1024 * 10
 
 ---@class lsp.server.requestoptions
 ---List of name->value parameters sent to request.
----@field params table<string,any>
+---@field params lsp.server.protocolparams
 ---Optional data appended to request.
----@field data table
+---@field data lsp.protocol.LSPAny
 ---Default callback executed when a response is received.
 ---@field callback lsp.server.responsecb
 ---Default callback executed when the request expires before receiving a response.
@@ -156,7 +159,7 @@ function Server.get_completion_item_kind(id)
 end
 
 ---Get list of supported completion kinds.
----@return table
+---@return lsp.protocol.CompletionItemKind[]
 function Server.get_completion_items_kind_list()
   local list = {}
   for i = 1, #protocol.CompletionItemKindString do
@@ -186,8 +189,8 @@ end
 
 ---Given a ServerCapabilities object, return a "normalized" version
 ---that simplifies capabilities checks.
----@param capabilities table
----returns table
+---@param capabilities lsp.protocol.server.ServerCapabilities
+---@return lsp.protocol.server.ServerCapabilities
 function Server.normalize_server_capabilities(capabilities)
   local cap = util.deep_merge({ }, capabilities)
   local tds = {
@@ -403,8 +406,8 @@ function Server:initialize(workspace, editor_name, editor_version)
             relatedInformation = true,
             tagSupport = {
               valueSet = {
-                diagnostics.tag.UNNECESSARY,
-                diagnostics.tag.DEPRECATED
+                protocol.DiagnosticTag.Unnecessary,
+                protocol.DiagnosticTag.Deprecated
               }
             },
             versionSupport = true,
@@ -511,7 +514,7 @@ end
 
 ---Send a message to the server that doesn't needs a response.
 ---@param method string
----@param params? table
+---@param params? lsp.server.protocolparams
 ---@return boolean sent
 function Server:notify(method, params)
   local message = {
@@ -541,7 +544,7 @@ end
 
 ---Reply to a server request.
 ---@param id integer
----@param result table
+---@param result lsp.protocol.LSPAny
 ---@return boolean sent
 function Server:respond(id, result)
   local message = {
@@ -1107,8 +1110,8 @@ end
 ---the hit rate was reached.
 ---@param method string
 ---@param id integer
----@param result table|nil
----@param error table|nil
+---@param result lsp.protocol.LSPAny
+---@param error lsp.protocol.ResponseError|nil
 function Server:push_response(method, id, result, error)
   if self:hitrate_reached("request") then
     return
@@ -1184,7 +1187,7 @@ end
 ---Try to fetch a server responses, notifications or requests
 ---in a specific amount of time.
 ---@param timeout integer Time in seconds, set to 0 to not wait
----@return table[]|boolean Responses list or false if failed
+---@return lsp.server.protocolmessage[]|boolean Responses list or false if failed
 function Server:read_responses(timeout)
   local proc = self.proc -- save current process to avoid it changing
   if not proc or not proc:running() then
@@ -1356,7 +1359,7 @@ function Server:read_errors(timeout)
 end
 
 ---Try to send a request to a server in a specific amount of time.
----@param data table | string Table or string with the json request
+---@param data lsp.server.protocolmessage | string Table or string with the json request
 ---@return boolean written
 ---@return string? errmsg
 function Server:write_request(data)
@@ -1382,7 +1385,7 @@ function Server:log(message, ...)
 end
 
 ---Call an apropriate signal handler for a given response.
----@param response table
+---@param response lsp.protocol.ResponseMessage
 function Server:send_response_signal(response)
   local request = self:pop_request(response.id)
   if request then
@@ -1397,7 +1400,7 @@ function Server:send_response_signal(response)
 end
 
 ---Called for each response that doesn't has a signal handler.
----@param response table
+---@param response lsp.protocol.ResponseMessage
 ---@param request lsp.server.request | nil
 function Server:on_response(response, request)
   if self.verbose then
@@ -1411,7 +1414,7 @@ end
 
 ---Register a request handler.
 ---@param method string
----@param callback lsp.server.responsecb
+---@param callback lsp.server.requestcb
 function Server:add_request_listener(method, callback)
   if self.verbose then
     self:log(
@@ -1427,7 +1430,7 @@ function Server:add_request_listener(method, callback)
 end
 
 ---Call an apropriate signal handler for a given request.
----@param request table
+---@param request lsp.protocol.RequestMessage
 function Server:send_request_signal(request)
   if not request.method then
     if self.verbose and request.id then
@@ -1449,7 +1452,7 @@ function Server:send_request_signal(request)
 end
 
 ---Called for each request that doesn't has a signal handler.
----@param request table
+---@param request lsp.protocol.RequestMessage
 function Server:on_request(request)
   if self.verbose then
     self:log(
@@ -1490,7 +1493,7 @@ function Server:add_message_listener(method, callback)
 end
 
 ---Call an apropriate signal handler for a given message or notification.
----@param message table
+---@param message lsp.protocol.NotificationMessage
 function Server:send_message_signal(message)
   if self.message_listeners[message.method] then
     for _, l in ipairs(self.message_listeners[message.method]) do

@@ -18,6 +18,11 @@ local SelectBox = require "widget.selectbox"
 
 local Lsp = nil
 
+---@class lsp.ui.symbolstree.itemdata
+---@field range lsp.protocol.Range
+---@field type lsp.protocol.SymbolKind
+---@field uri? lsp.protocol.DocumentUri
+
 local SYMBOLS_KIND_ICONS = {
   { name = "File",          color = "string",   icon = '' }, -- U+F718
   { name = "Module",        color = "literal",  icon = '' }, -- U+F487
@@ -226,10 +231,16 @@ function SymbolsTree:add_results(results, top_level)
       item.expanded = true
     end
 
+    ---@type lsp.ui.symbolstree.itemdata
     item.data = {
       range = result.selectionRange or result.location.range,
       type = result.kind,
     }
+    if result.uri then
+      item.data.uri = result.uri
+    elseif result.location and result.location.uri then
+      item.data.uri = result.location.uri
+    end
 
     item.tooltip = kind.name
 

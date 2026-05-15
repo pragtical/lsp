@@ -5,76 +5,18 @@
 local core = require "core"
 local config = require "core.config"
 local util = require "plugins.lsp.util"
+local protocol = require "plugins.lsp.protocol"
 local Timer = require "plugins.lsp.timer"
 
 ---@class lsp.diagnostics
 local diagnostics = {}
 
----@class lsp.diagnostics.position
----@field line integer
----@field character integer
-
----@class lsp.diagnostics.range
----@field start lsp.diagnostics.position
----@field end lsp.diagnostics.position
-
----@class lsp.diagnostics.severity
----@field ERROR integer
----@field WARNING integer
----@field INFO integer
----@field HINT integer
-diagnostics.severity = {
-  ERROR = 1,
-  WARNING = 2,
-  INFO = 3,
-  HINT = 4
-}
-
----@alias lsp.diagnostics.severity_code
----|>`diagnostics.severity.ERROR`
----| `diagnostics.severity.WARNING`
----| `diagnostics.severity.INFO`
----| `diagnostics.severity.HINT`
-
----@class lsp.diagnostics.code_description
----@field href string
-
----@class lsp.diagnostics.tag
----@field UNNECESSARY integer
----@field DEPRECATED integer
-diagnostics.tag = {
-  UNNECESSARY = 1,
-  DEPRECATED = 2
-}
-
----@alias lsp.diagnostics.tag_code
----|>`diagnostics.tag.UNNECESSARY`
----| `diagnostics.tag.DEPRECATED`
-
----@class lsp.diagnostics.location
----@field uri string
----@field range lsp.diagnostics.range
-
----@class lsp.diagnostics.related_information
----@field location lsp.diagnostics.location
----@field message string
-
----A diagnostic message.
----@class lsp.diagnostics.message
----@field range lsp.diagnostics.position
----@field severity? lsp.diagnostics.severity_code | integer
----@field code? integer | string
----@field codeDescription? lsp.diagnostics.code_description
----@field source? string
----@field message string
----@field tags? lsp.diagnostics.tag_code[]
----@field relatedInformation? lsp.diagnostics.related_information[]
----@field data? any
+---@alias lsp.diagnostics.message lsp.protocol.Diagnostic
 
 ---A diagnostic item.
 ---@class lsp.diagnostics.item
 ---@field filename string
----@field messages lsp.diagnostics.message[]
+---@field messages lsp.protocol.Diagnostic[]
 
 ---@type table<integer, lsp.diagnostics.item>
 diagnostics.list = {}
@@ -103,8 +45,8 @@ diagnostics.lintplus_found = lintplus_found
 ---@param a lsp.diagnostics.message
 ---@param b lsp.diagnostics.message
 local function sort_helper(a, b)
-  local a_severity = a.severity or diagnostics.severity.ERROR
-  local b_severity = b.severity or diagnostics.severity.ERROR
+  local a_severity = a.severity or protocol.DiagnosticSeverity.Error
+  local b_severity = b.severity or protocol.DiagnosticSeverity.Error
   return a_severity < b_severity
 end
 
@@ -139,8 +81,8 @@ end
 
 ---Get the diagnostics associated to a file.
 ---@param filename string
----@param severity? lsp.diagnostics.severity_code | integer
----@return lsp.diagnostics.message[] | nil
+---@param severity? lsp.protocol.DiagnosticSeverity | integer
+---@return lsp.protocol.Diagnostic[] | nil
 function diagnostics.get(filename, severity)
   ---@cast filename +nil
   filename = get_absolute_path(filename)
@@ -151,7 +93,7 @@ function diagnostics.get(filename, severity)
 
       local results = {}
       for _, message in ipairs(diagnostic.messages) do
-        if (message.severity or diagnostics.severity.ERROR) == severity then
+        if (message.severity or protocol.DiagnosticSeverity.Error) == severity then
           table.insert(results, message)
         end
       end
@@ -164,7 +106,7 @@ end
 
 ---Adds a new list of diagnostics associated to a file replacing previous one.
 ---@param filename string
----@param messages lsp.diagnostics.message[]
+---@param messages lsp.protocol.Diagnostic[]
 ---@return boolean
 function diagnostics.add(filename, messages)
   local index = diagnostics.get_index(filename)
@@ -200,7 +142,7 @@ end
 
 ---Get the amount of diagnostics associated to a file.
 ---@param filename string
----@param severity? lsp.diagnostics.severity_code | integer
+---@param severity? lsp.protocol.DiagnosticSeverity | integer
 function diagnostics.get_messages_count(filename, severity)
   local index = diagnostics.get_index(filename)
 
@@ -210,7 +152,7 @@ function diagnostics.get_messages_count(filename, severity)
 
   local count = 0
   for _, message in ipairs(diagnostics.list[index].messages) do
-    if (message.severity or diagnostics.severity.ERROR) == severity then
+    if (message.severity or protocol.DiagnosticSeverity.Error) == severity then
       count = count + 1
     end
   end
@@ -263,7 +205,7 @@ function diagnostics.lintplus_populate(filename)
         for _, message in pairs(diagnostic.messages) do
           local line, col = util.toselection(message.range)
           local text = message.message
-          local kind = lintplus_kinds[message.severity or diagnostics.severity.ERROR]
+          local kind = lintplus_kinds[message.severity or protocol.DiagnosticSeverity.Error]
 
           lintplus.add_message(fname, line, col, kind, text, nil, "lsp")
         end
@@ -274,7 +216,7 @@ function diagnostics.lintplus_populate(filename)
         for _, message in pairs(messages) do
           local line, col = util.toselection(message.range)
           local text = message.message
-          local kind = lintplus_kinds[message.severity or diagnostics.severity.ERROR]
+          local kind = lintplus_kinds[message.severity or protocol.DiagnosticSeverity.Error]
 
           lintplus.add_message(
             core.normalize_to_project_dir(filename),
@@ -287,7 +229,6 @@ function diagnostics.lintplus_populate(filename)
 end
 
 ---@param filename string
----@param user_typed boolean
 function diagnostics.lintplus_populate_delayed(filename)
   if lintplus_found then
     if not lintplus_delays[filename] then
