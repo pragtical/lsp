@@ -1967,7 +1967,11 @@ function lsp.request_symbol_rename(doc, line, col, new_name)
       server:push_request('textDocument/rename', {
         params = request_params,
         callback = function(server, response)
-          if response.result and response.result.changes and next(response.result.changes) then
+          if
+            response.result
+            and
+            workspaceedit.has_text_document_changes(response.result)
+          then
             ---@cast response.result lsp.protocol.WorkspaceEdit
             local rename_symbol = RenameSymbol(response.result)
             core.root_view:get_active_node_default():add_view(rename_symbol)
@@ -2013,11 +2017,7 @@ function lsp.execute_command(server, lsp_command)
     callback = function(server, response)
       if response.error and response.error.message then
         core.error("[LSP] %s", response.error.message)
-      elseif
-        response.result
-        and
-        (response.result.changes or response.result.documentChanges)
-      then
+      elseif workspaceedit.is_workspace_edit(response.result) then
         ---@cast response.result lsp.protocol.WorkspaceEdit
         lsp.apply_workspace_edit(server, response.result)
       end

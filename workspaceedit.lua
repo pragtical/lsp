@@ -78,6 +78,84 @@ local function apply_uri_edits(server, uri, edits)
   return ok
 end
 
+---Check if a value looks like a WorkspaceEdit.
+---@param value any
+---@return boolean
+function workspaceedit.is_workspace_edit(value)
+  return type(value) == "table"
+    and (value.changes ~= nil or value.documentChanges ~= nil)
+end
+
+---Collect textual document changes from a WorkspaceEdit.
+---@param edit lsp.protocol.WorkspaceEdit
+---@return table<lsp.protocol.DocumentUri,lsp.protocol.TextEdit[] | lsp.protocol.AnnotatedTextEdit[]>
+function workspaceedit.get_text_document_changes(edit)
+  local changes = {}
+  if not edit then return changes end
+
+  if edit.changes then
+    for uri, edits in pairs(edit.changes) do
+      changes[uri] = changes[uri] or {}
+      for _, text_edit in ipairs(edits) do
+        table.insert(changes[uri], text_edit)
+      end
+    end
+  end
+
+  if edit.documentChanges then
+    for _, change in ipairs(edit.documentChanges) do
+      if change.textDocument and change.textDocument.uri and change.edits then
+        local uri = change.textDocument.uri
+        changes[uri] = changes[uri] or {}
+        for _, text_edit in ipairs(change.edits) do
+          table.insert(changes[uri], text_edit)
+        end
+      end
+    end
+  end
+
+  return changes
+end
+
+---Check if a WorkspaceEdit contains textual document changes.
+---@param edit lsp.protocol.WorkspaceEdit
+---@return boolean
+function workspaceedit.has_text_document_changes(edit)
+  return next(workspaceedit.get_text_document_changes(edit)) ~= nil
+end
+
+---Collect resource operations from a WorkspaceEdit.
+---@param edit lsp.protocol.WorkspaceEdit
+---@return lsp.protocol.WorkspaceEditDocumentChange[]
+function workspaceedit.get_resource_operations(edit)
+  local operations = {}
+  if not edit or not edit.documentChanges then return operations end
+
+  for _, change in ipairs(edit.documentChanges) do
+    if
+      change.kind == "create"
+      or change.kind == "rename"
+      or change.kind == "delete"
+    then
+      table.insert(operations, change)
+    end
+  end
+
+  return operations
+end
+
+local function refresh_renamed_docs(old_filename, new_filename)
+  if not core.docs then return end
+  for _, doc in ipairs(core.docs) do
+    if doc.abs_filename and doc.abs_filename == old_filename then
+      local filename = core.normalize_to_project_dir(new_filename)
+      doc:set_filename(filename, new_filename)
+      doc:reset_syntax()
+      break
+    end
+  end
+end
+
 local function create_file(change)
   local filename = common.home_expand(util.tofilename(change.uri))
   local info = system.get_file_info(filename)
@@ -116,7 +194,11 @@ local function rename_file(change)
     return false
   end
 
-  return os.rename(old_filename, new_filename) == true
+  local ok_rename = os.rename(old_filename, new_filename) == true
+  if ok_rename then
+    refresh_renamed_docs(old_filename, new_filename)
+  end
+  return ok_rename
 end
 
 local function delete_file(change)
@@ -130,6 +212,32 @@ local function delete_file(change)
   return ok == true
 end
 
+---Apply one WorkspaceEdit resource operation.
+---@param operation lsp.protocol.WorkspaceEditDocumentChange
+---@return boolean
+function workspaceedit.apply_resource_operation(operation)
+  if operation.kind == "create" then
+    return create_file(operation)
+  elseif operation.kind == "rename" then
+    return rename_file(operation)
+  elseif operation.kind == "delete" then
+    return delete_file(operation)
+  end
+  return false
+end
+
+---Apply WorkspaceEdit resource operations.
+---@param operations lsp.protocol.WorkspaceEditDocumentChange[]
+---@return boolean
+function workspaceedit.apply_resource_operations(operations)
+  for _, operation in ipairs(operations) do
+    if not workspaceedit.apply_resource_operation(operation) then
+      return false
+    end
+  end
+  return true
+end
+
 ---Apply a WorkspaceEdit.
 ---@param server lsp.server
 ---@param edit lsp.protocol.WorkspaceEdit
@@ -140,11 +248,11 @@ function workspaceedit.apply_workspace_edit(server, edit)
   if edit.documentChanges then
     for _, change in ipairs(edit.documentChanges) do
       if change.kind == "create" then
-        if not create_file(change) then return false end
+        if not workspaceedit.apply_resource_operation(change) then return false end
       elseif change.kind == "rename" then
-        if not rename_file(change) then return false end
+        if not workspaceedit.apply_resource_operation(change) then return false end
       elseif change.kind == "delete" then
-        if not delete_file(change) then return false end
+        if not workspaceedit.apply_resource_operation(change) then return false end
       elseif change.textDocument and change.edits then
         if not apply_uri_edits(server, change.textDocument.uri, change.edits) then
           return false
