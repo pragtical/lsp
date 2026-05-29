@@ -113,11 +113,7 @@ local function get_anchor_position(active_view)
     return
   end
 
-  local x, y = active_view:get_line_screen_position(line)
-
-  -- This function causes tokenizer to fail if given line is greater than
-  -- the amount of lines the document holds, so validation above is needed.
-  x = x + active_view:get_col_x_offset(line, col)
+  local x, y = active_view:get_line_screen_position(line, col)
 
   if settings.above_text and line > 1 then
     y = y - active_view:get_line_height() - style.padding.y
