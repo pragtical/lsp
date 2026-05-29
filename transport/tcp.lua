@@ -209,10 +209,10 @@ function TcpTransport:write(data)
   end
 
   local written, errmsg = self.socket:write(data)
-  if written then
-    return #data
+  if not written then
+    return nil, errmsg
   end
-  return nil, errmsg
+  return written
 end
 
 ---@param amount integer

@@ -881,14 +881,16 @@ function Server:send_data(data)
     written, errmsg = self.transport:write(data:sub(total_written + 1))
     total_written = total_written + (written or 0)
 
-    if (not written or written <= 0) and not errmsg and co_running then
-      -- with each consecutive fail the yield timeout is increased by 5ms
-      coroutine.yield((failures * 5) / 1000)
-
+    if (not written or written <= 0) and not errmsg then
       failures = failures + 1
       if failures > 19 then -- after ~1000ms we error out
         errmsg = "maximum amount of consecutive failures reached"
         break
+      end
+
+      if co_running then
+        -- with each consecutive fail the yield timeout is increased by 5ms
+        coroutine.yield((failures * 5) / 1000)
       end
     else
       failures = 0
