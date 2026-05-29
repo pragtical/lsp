@@ -1287,7 +1287,7 @@ function lsp.get_hovered_location(x, y)
     local doc = av.doc
     local line, col = av:resolve_screen_position(x, y)
     local last_x = av:get_col_x_offset(line, #av.doc.lines[line])
-    local lx, ly = av:get_line_screen_position(line)
+    local lx, ly = av:get_line_screen_position(line, col)
     if x > last_x + lx or y > ly + av:get_line_height() then return end
     return doc, line, col
   end
