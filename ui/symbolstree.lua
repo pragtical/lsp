@@ -201,6 +201,96 @@ local function add_select_kinds(self)
   sync_selectbox_selection(self)
 end
 
+---@param items widget.treelist.item[]
+---@param target widget.treelist.item
+---@return boolean removed
+local function remove_item(items, target)
+  for index, item in ipairs(items) do
+    if item == target then
+      table.remove(items, index)
+      return true
+    elseif item.childs and remove_item(item.childs, target) then
+      return true
+    end
+  end
+  return false
+end
+
+---@param item widget.treelist.item
+---@param name string
+---@param matches widget.treelist.item[]
+local function collect_named_items(item, name, matches)
+  if item.name == name then
+    table.insert(matches, item)
+  end
+  if item.childs then
+    for _, child in ipairs(item.childs) do
+      collect_named_items(child, name, matches)
+    end
+  end
+end
+
+---@param self lsp.ui.symbolstree
+---@param items widget.treelist.item[]
+---@param container_name string
+---@return widget.treelist.item?
+local function find_container(self, items, container_name)
+  if container_name:find(">", 1, true) then
+    return self.tree:query_item(container_name, items)
+  end
+
+  local matches = {}
+  for _, item in ipairs(items) do
+    collect_named_items(item, container_name, matches)
+    if #matches > 1 then
+      return nil
+    end
+  end
+  return matches[1]
+end
+
+---@param self lsp.ui.symbolstree
+---@param result lsp.protocol.DocumentSymbol | lsp.protocol.SymbolInformation
+---@param top_level? boolean
+---@param total_results? integer
+---@return widget.treelist.item
+local function create_symbol_item(self, result, top_level, total_results)
+  local kind = SYMBOLS_KIND_ICONS[result.kind]
+  local childs = result.children and self:add_results(result.children) or nil
+
+  self.kinds[kind.name] = result.kind
+
+  ---@type widget.treelist.item
+  local item = {
+    name = result.name,
+    label = result.name
+  }
+
+  item.icon = kind.icon
+  if childs and #childs > 0 then
+    item.childs = childs
+  end
+
+  if top_level and total_results and total_results <= 2 then
+    item.expanded = true
+  end
+
+  ---@type lsp.ui.symbolstree.itemdata
+  item.data = {
+    range = result.selectionRange or result.location.range,
+    type = result.kind,
+  }
+  if result.uri then
+    item.data.uri = result.uri
+  elseif result.location and result.location.uri then
+    item.data.uri = result.location.uri
+  end
+
+  item.tooltip = kind.name
+
+  return item
+end
+
 ---Build tree items from document symbols.
 ---@param results lsp.protocol.DocumentSymbol[] | lsp.protocol.SymbolInformation[]
 ---@param top_level? boolean
@@ -208,49 +298,28 @@ end
 function SymbolsTree:add_results(results, top_level)
   ---@type widget.treelist.item[]
   local items = {}
+  local symbol_items = {}
 
   for i=1, #results do
     local result = results[i]
-    local kind = SYMBOLS_KIND_ICONS[result.kind]
-    local childs = result.children and self:add_results(result.children) or nil
+    local item = create_symbol_item(self, result, top_level, #results)
+    table.insert(items, item)
+    table.insert(symbol_items, {
+      result = result,
+      item = item
+    })
+  end
 
-    self.kinds[kind.name] = result.kind
-
-    ---@type widget.treelist.item
-    local item = {
-      name = result.name,
-      label = result.name
-    }
-
-    item.icon = kind.icon
-    if childs and #childs > 0 then
-      item.childs = childs
-    end
-
-    if top_level and #results <= 2 then
-      item.expanded = true
-    end
-
-    ---@type lsp.ui.symbolstree.itemdata
-    item.data = {
-      range = result.selectionRange or result.location.range,
-      type = result.kind,
-    }
-    if result.uri then
-      item.data.uri = result.uri
-    elseif result.location and result.location.uri then
-      item.data.uri = result.location.uri
-    end
-
-    item.tooltip = kind.name
-
-    local container = result.containerName
-      and self.tree:query_item(result.containerName, items) or nil
-    if container then
-      container.childs = container.childs or {}
-      table.insert(container.childs, item)
-    else
-      table.insert(items, item)
+  for _, symbol_item in ipairs(symbol_items) do
+    local result = symbol_item.result
+    if result.containerName then
+      local item = symbol_item.item
+      local container = find_container(self, items, result.containerName)
+      if container and container ~= item then
+        remove_item(items, item)
+        container.childs = container.childs or {}
+        table.insert(container.childs, item)
+      end
     end
   end
 

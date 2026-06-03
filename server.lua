@@ -372,8 +372,8 @@ function Server:initialize(workspace, editor_name, editor_version)
           -- documentHighlight = {dynamicRegistration = false}, -- not supported
           documentSymbol = {
             -- dynamicRegistration = false, -- not supported
-            symbolKind = {valueSet = Server.get_symbols_kind_list()}
-            -- hierarchicalDocumentSymbolSupport = true,
+            symbolKind = {valueSet = Server.get_symbols_kind_list()},
+            hierarchicalDocumentSymbolSupport = true
             -- tagSupport = {valueSet = {}},
             -- labelSupport = true
           },
