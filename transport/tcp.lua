@@ -1,5 +1,4 @@
 local core = require "core"
-local net = require "net"
 local Object = require "core.object"
 
 local CONNECT_TIMEOUT_MS = 10000

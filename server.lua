@@ -272,6 +272,13 @@ function Server:new(options)
   self.max_restarts = -1
   self.hitrate_list = {}
   self.requests_per_second = options.requests_per_second or 16
+
+  if self.transport_kind == "tcp" and not rawget(_G, "net") then
+    self.fatal_error = true
+    self.shutdown_reason = "tcp transport requires the Pragtical net module, but it is disabled or unavailable"
+    return
+  end
+
   self.transport = transport.new(options)
   self.quit_timeout = options.quit_timeout or 60
   self.exit_timer = nil
