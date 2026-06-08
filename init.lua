@@ -598,8 +598,22 @@ local function apply_completion_edit(
   if not range then return false end
 
   local text = text_edit.newText
-  local line1, col1, line2, col2 = util.toselection(range, doc)
+  local line1, col1, line2, col2
   local current_text = ""
+
+  if
+    not server.capabilities.positionEncoding
+    or
+    server.capabilities.positionEncoding == protocol.PositionEncodingKind.UTF16
+  then
+    line1, col1, line2, col2 = util.toselection(range, doc)
+  else
+    core.error(
+      "[LSP] Unsupported position encoding: ",
+      server.capabilities.positionEncoding
+    )
+    return false
+  end
 
   if lsp.in_trigger then
     local cline2, ccol2 = doc:get_selection()
@@ -607,9 +621,8 @@ local function apply_completion_edit(
     current_text = doc:get_text(cline1, ccol1, cline2, ccol2)
   end
 
-  doc:remove(line1, col1, line2, col2+#current_text)
-
   if is_snippet and snippets_found and config.plugins.lsp.snippets then
+    doc:remove(line1, col1, line2, col2 + #current_text)
     doc:set_selection(line1, col1, line1, col1)
     snippets.execute {format = 'lsp', template = text}
     return true
