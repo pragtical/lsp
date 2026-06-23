@@ -1322,7 +1322,6 @@ function lsp.open_document(doc)
   local active_servers = lsp.get_active_servers(doc.filename, true)
 
   if #active_servers > 0 then
-    doc.disable_symbols = true -- disable symbol parsing on autocomplete plugin
     for _, name in pairs(active_servers) do
       local server = lsp.servers_running[name]
       if server.capabilities.textDocumentSync.openClose then
@@ -1567,9 +1566,24 @@ function lsp.toggle_diagnostics()
 end
 
 --- Send to applicable LSP servers a request for code completion
-function lsp.request_completion(doc, line, col, forced)
+---@param opts? { on_empty: fun() }
+function lsp.request_completion(doc, line, col, forced, opts)
+  opts = opts or {}
   if lsp.in_trigger or not doc.lsp_open then
+    if opts.on_empty then opts.on_empty(doc) end
     return
+  end
+
+  local pending = 0
+  local has_results = false
+  local empty_notified = false
+  local function completion_empty()
+    if pending <= 0 or empty_notified then return end
+    pending = pending - 1
+    if pending <= 0 and not has_results and opts.on_empty then
+      empty_notified = true
+      opts.on_empty(doc)
+    end
   end
 
   for _, name in pairs(lsp.get_active_servers(doc.filename, true)) do
@@ -1609,6 +1623,7 @@ function lsp.request_completion(doc, line, col, forced)
         return false
       end
 
+      pending = pending + 1
       local partial = { autocomplete.get_partial_symbol() }
 
       server:push_request('textDocument/completion', {
@@ -1629,7 +1644,8 @@ function lsp.request_completion(doc, line, col, forced)
             )
           end
 
-          if not response.result then
+          if not response or not response.result then
+            completion_empty()
             return
           end
 
@@ -1652,6 +1668,7 @@ function lsp.request_completion(doc, line, col, forced)
               local items = result
               result = {items = items}
             else
+              completion_empty()
               return
             end
           end
@@ -1739,9 +1756,20 @@ function lsp.request_completion(doc, line, col, forced)
           else
             autocomplete.complete(symbols)
           end
+
+          if autocomplete.is_open() then
+            has_results = true
+          else
+            lsp.in_trigger = false
+            completion_empty()
+          end
         end
       })
     end
+  end
+
+  if pending == 0 and opts.on_empty then
+    opts.on_empty(doc)
   end
 end
 
@@ -2898,18 +2926,54 @@ node:split("right", lsp.symbols_tree, {x = true}, true)
 --
 -- Commands
 --
+local original_autocomplete_open = command.map["autocomplete:open"]
+
+---@param doc core.doc
+local function perform_original_autocomplete_open(doc)
+  if not original_autocomplete_open then return false end
+  local res = { original_autocomplete_open.predicate() }
+  if table.remove(res, 1) then
+    if doc and doc.disable_symbols then doc.disable_symbols = nil end
+    autocomplete.close()
+    original_autocomplete_open.perform(table.unpack(res))
+    return true
+  end
+  return false
+end
+
+---@param doc core.doc
+local function lsp_complete_with_fallback(doc)
+  if doc.lsp_open then
+    local line1, col1, line2, col2 = doc:get_selection()
+    if line1 ~= line2 or col1 ~= col2 then
+      perform_original_autocomplete_open(doc)
+      return
+    end
+    doc.disable_symbols = true -- disable symbol parsing on autocomplete plugin
+    lsp.request_completion(doc, line1, col1, true, {
+      on_empty = perform_original_autocomplete_open
+    })
+  else
+    perform_original_autocomplete_open(doc)
+  end
+end
+
+command.add(
+  function()
+    local dv = get_active_docview()
+    return dv ~= nil, dv and dv.doc or nil
+  end, {
+
+  ["autocomplete:open"] = lsp_complete_with_fallback,
+
+  ["lsp:complete"] = lsp_complete_with_fallback,
+})
+
 command.add(
   function()
     local dv = get_active_docview()
     return dv ~= nil and dv.doc.lsp_open, dv and dv.doc or nil
   end, {
-
-  ["lsp:complete"] = function(doc)
-    local line1, col1, line2, col2 = doc:get_selection()
-    if line1 == line2 and col1 == col2 then
-      lsp.request_completion(doc, line1, col1, true)
-    end
-  end,
 
   ["lsp:goto-definition"] = function(doc)
     local line1, col1, line2 = doc:get_selection()
