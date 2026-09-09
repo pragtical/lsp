@@ -1500,31 +1500,29 @@ function lsp.update_document(doc, request_completion)
         and
         not server.incremental_changes
       then
-        -- If sync should be done by sending full file content then lets do
-        -- it raw which is faster for big files.
-        local text = table.concat(doc.lines)
-          :gsub('\\', '\\\\'):gsub("\n", "\\n"):gsub("\r", "\\r")
-          :gsub("\t", "\\t"):gsub('"', '\\"'):gsub('\b', '\\b')
-          :gsub('\f', '\\f')
-
-        server:push_raw("textDocument/didChange", {
+        local uri = util.touri(doc.abs_filename)
+        local version
+        -- Full-sync servers need only the latest snapshot. Build it in the
+        -- background sender, instead of encoding the buffer on each keystroke.
+        server:push_raw("textDocument/didChange:" .. uri, {
           overwrite = true,
-          raw_data = '{\n'
-          .. '"jsonrpc": "2.0",\n'
-          .. '"method": "textDocument/didChange",\n'
-          .. '"params": {\n'
-          .. '"textDocument": {\n'
-          .. '"uri": "'..util.touri(core.project_absolute_path(doc.filename))..'",\n'
-          .. '"version": '..doc.lsp_version .. "\n"
-          .. '},\n'
-          .. '"contentChanges": [\n'
-          .. '{"text": "'..text..'"}\n'
-          .. "]\n"
-          .. '}\n'
-          .. '}\n',
-          callback = function()
+          raw_data = function()
+            version = doc.lsp_version
+            local data = json.encode {
+              jsonrpc = "2.0",
+              method = "textDocument/didChange",
+              params = {
+                textDocument = { uri = uri, version = version },
+                contentChanges = { { text = table.concat(doc.lines) } }
+              }
+            }
+            -- Detach only the changes in this snapshot. Edits made while its
+            -- chunks are being sent belong to the next queued update.
             doc.lsp_changes[server] = nil
-            if completion_callback then
+            return data
+          end,
+          callback = function()
+            if completion_callback and doc.lsp_version == version then
               completion_callback()
             end
           end

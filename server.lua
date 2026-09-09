@@ -36,7 +36,7 @@ local Object = require "core.object"
 ---@field overwritten boolean
 ---@field overwritten_callback lsp.server.responsecb | nil
 ---@field sending boolean
----@field raw_data string
+---@field raw_data string | fun(): string
 ---@field timeout number
 ---@field timeout_callback lsp.server.timeoutcb | nil
 ---@field timestamp number
@@ -154,8 +154,8 @@ Server.BUFFER_SIZE = 1024 * 10
 ---@field overwrite boolean
 ---Executed in place of original response callback if the request should have been overwritten but was already sent.
 ---@field overwritten_callback lsp.server.responsecb
----Request body used when sending a raw request.
----@field raw_data string
+---Request body, or a function evaluated once when the sender starts the request.
+---@field raw_data string | fun(): string
 ---Timeout in seconds to consider the request unanswered.
 ---@field timeout? number
 ---Callback executed when the request times out.
@@ -937,6 +937,9 @@ function Server:process_raw()
   local sent = false
   for index, raw in ipairs(self.raw_list) do
     raw.sending = true
+    if type(raw.raw_data) == "function" then
+      raw.raw_data = raw.raw_data()
+    end
 
     -- first send the header
     if
@@ -1185,8 +1188,8 @@ function Server:push_response(method, id, result, error)
   table.insert(self.response_list, response)
 end
 
----Send raw json strings to server in cases where the json encoder
----would be too slow to convert a lua table into a json representation.
+---Queue a raw JSON message for chunked background sending. A body producer
+---defers serialization until sending starts, so overwritten updates do no work.
 ---@param name string A name to identify the request when overwriting.
 ---@param options lsp.server.requestoptions
 function Server:push_raw(name, options)
@@ -1194,17 +1197,14 @@ function Server:push_raw(name, options)
 
   if options.overwrite then
     for _, request in ipairs(self.raw_list) do
-      if request.method == name then
-        if not request.sending then
-          request.raw_data = options.raw_data
-          request.callback = options.callback
-          request.data = options.data
-          if self.verbose then
-            self:log("Overwriting raw request %s", tostring(name))
-          end
-          return
+      if request.method == name and not request.sending then
+        request.raw_data = options.raw_data
+        request.callback = options.callback
+        request.data = options.data
+        if self.verbose then
+          self:log("Overwriting raw request %s", tostring(name))
         end
-        break
+        return
       end
     end
   end
