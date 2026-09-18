@@ -30,7 +30,10 @@ local Object = require "core.object"
 ---@field id integer
 ---@field method string
 ---@field data lsp.protocol.LSPAny
----@field params lsp.server.protocolparams
+---Notifications may defer parameter construction until the sender starts.
+---@field params lsp.server.protocolparams | fun(): lsp.server.protocolparams
+---Optional notification coalescing key, matched together with the method.
+---@field overwrite_key? string
 ---@field callback? lsp.server.responsecb
 ---@field on_expired? lsp.server.callback
 ---@field overwritten boolean
@@ -142,8 +145,8 @@ Server.DEFAULT_TIMEOUT = 10
 Server.BUFFER_SIZE = 1024 * 10
 
 ---@class lsp.server.requestoptions
----List of name->value parameters sent to request.
----@field params lsp.server.protocolparams
+---Parameters to send. Notifications may use a function evaluated once on send.
+---@field params lsp.server.protocolparams | fun(): lsp.server.protocolparams
 ---Optional data appended to request.
 ---@field data lsp.protocol.LSPAny
 ---Default callback executed when a response is received.
@@ -152,6 +155,8 @@ Server.BUFFER_SIZE = 1024 * 10
 ---@field on_expired lsp.server.callback
 ---Substitute same previous request with new one if not sent.
 ---@field overwrite boolean
+---Only overwrite notifications with the same method and key (default: nil).
+---@field overwrite_key? string
 ---Executed in place of original response callback if the request should have been overwritten but was already sent.
 ---@field overwritten_callback lsp.server.responsecb
 ---Request body, or a function evaluated once when the sender starts the request.
@@ -650,6 +655,9 @@ function Server:process_notifications()
 
   for index, request in ipairs(notifications) do
     request.sending = true
+    if type(request.params) == "function" then
+      request.params = request.params()
+    end
     local message = {
       jsonrpc = '2.0',
       method = request.method,
@@ -1030,6 +1038,7 @@ end
 -- Notifications that should bypass the hitrate limit
 local notifications_whitelist = {
   "textDocument/didOpen",
+  "textDocument/didChange",
   "textDocument/didSave",
   "textDocument/didClose"
 }
@@ -1043,7 +1052,10 @@ function Server:push_notification(method, options)
 
   if options.overwrite then
     for _, notification in ipairs(self.notification_list) do
-      if notification.method == method and not notification.sending then
+      if notification.method == method
+        and notification.overwrite_key == options.overwrite_key
+        and not notification.sending
+      then
         if self.verbose then
           self:log("Overwriting notification %s", tostring(method))
         end
@@ -1056,11 +1068,9 @@ function Server:push_notification(method, options)
   end
 
   if
-    method ~= "textDocument/didOpen"
+    not util.intable(method, notifications_whitelist)
     and
     self:hitrate_reached("request")
-    and
-    not util.intable(method, notifications_whitelist)
   then
     return false
   end
@@ -1069,13 +1079,15 @@ function Server:push_notification(method, options)
     self:log(
       "Pushing notification '%s':\n%s",
       method,
-      util.jsonprettify(json.encode(options.params))
+      type(options.params) == "function" and "(deferred)"
+        or util.jsonprettify(json.encode(options.params))
     )
   end
 
   -- Store the notification for later processing
   table.insert(self.notification_list, {
     method = method,
+    overwrite_key = options.overwrite_key,
     params = options.params,
     callback = options.callback,
     data = options.data,

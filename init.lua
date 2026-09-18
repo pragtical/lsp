@@ -875,24 +875,12 @@ end
 function lsp.get_active_servers(filename, initialized)
   local servers = {}
   for name, server in pairs(lsp.servers) do
-    if common.match_pattern(filename, server.file_patterns) then
-      if lsp.servers_running[name] then
-        local add_server = true
-        if
-          initialized
-          and
-          (
-            not lsp.servers_running[name].initialized
-            or
-            not lsp.servers_running[name].capabilities
-          )
-        then
-          add_server = false
-        end
-        if add_server then
-          table.insert(servers, name)
-        end
-      end
+    local running = lsp.servers_running[name]
+    if running
+      and (not initialized or (running.initialized and running.capabilities))
+      and common.match_pattern(filename, server.file_patterns)
+    then
+      servers[#servers + 1] = name
     end
   end
   return servers
@@ -1485,11 +1473,7 @@ function lsp.update_document(doc, request_completion)
       goto continue
     end
     local sync_kind = server.capabilities.textDocumentSync.change
-    if
-      sync_kind ~= protocol.TextDocumentSyncKind.None
-      and
-      server:can_push() -- ensure we don't loose incremental changes
-    then
+    if sync_kind ~= protocol.TextDocumentSyncKind.None then
       local completion_callback = nil
       if request_completion then
         completion_callback = function() request_signature_completion(doc) end
@@ -1528,18 +1512,23 @@ function lsp.update_document(doc, request_completion)
           end
         })
       else
-        lsp.servers_running[name]:push_notification('textDocument/didChange', {
+        local uri = util.touri(doc.abs_filename)
+        local version
+        server:push_notification('textDocument/didChange', {
           overwrite = true,
-          params = {
-            textDocument = {
-              uri = util.touri(core.project_absolute_path(doc.filename)),
-              version = doc.lsp_version,
-            },
-            contentChanges = doc.lsp_changes[server]
-          },
-          callback = function()
+          overwrite_key = uri,
+          params = function()
+            version = doc.lsp_version
+            local changes = doc.lsp_changes[server]
+            -- Detach before writing, which may yield while new edits arrive.
             doc.lsp_changes[server] = nil
-            if completion_callback then
+            return {
+              textDocument = { uri = uri, version = version },
+              contentChanges = changes
+            }
+          end,
+          callback = function()
+            if completion_callback and doc.lsp_version == version then
               completion_callback()
             end
           end
