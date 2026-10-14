@@ -2728,7 +2728,7 @@ function Doc:raw_remove(line1, col1, line2, col2, undo_stack, time)
 end
 
 function RootView:on_text_input(text)
-  root_view_on_text_input(self, text)
+  if root_view_on_text_input(self, text) then return true end
 
   -- this part should actually trigger after Doc:raw_insert and Doc:raw_remove
   -- so it is safe to trigger autocompletion from here.
@@ -2744,6 +2744,7 @@ function RootView:on_mouse_moved(x, y, dx, dy)
   root_view_on_mouse_moved(self, x, y, dx, dy)
 
   if not config.plugins.lsp.mouse_hover then return end
+  if self.get_floating_view_at and self:get_floating_view_at(x, y) then return end
 
   local av = get_active_docview()
 
@@ -3131,6 +3132,41 @@ command.add(nil, {
   end
 })
 
+-- Separately distributed plugins retain support for editors without a menu bar.
+if core.menu_view then
+  core.menu_view:register({ "tools" }, {
+    { id = "lsp", text = "Language Server", items = {
+      { id = "complete", text = "Complete", command = "lsp:complete" },
+      { id = "code-action", text = "Code Action...", command = "lsp:code-action" },
+      { id = "format", text = "Format Document", command = "lsp:format-document" },
+      core.menu_view.DIVIDER,
+      { id = "definition", text = "Go to Definition", command = "lsp:goto-definition" },
+      { id = "implementation", text = "Go to Implementation", command = "lsp:goto-implementation" },
+      { id = "references", text = "Find References", command = "lsp:find-references" },
+      { id = "rename", text = "Rename Symbol...", command = "lsp:rename-symbol" },
+      { id = "call-hierarchy", text = "Call Hierarchy", command = "lsp:view-call-hierarchy" },
+      core.menu_view.DIVIDER,
+      { id = "symbol-info", text = "Symbol Information", command = "lsp:show-symbol-info" },
+      { id = "signature", text = "Signature Help", command = "lsp:show-signature" },
+      { id = "document-symbols", text = "Document Symbols", command = "lsp:view-document-symbols" },
+      { id = "workspace-symbols", text = "Find Workspace Symbol...", command = "lsp:find-workspace-symbol" },
+      { id = "symbols-tree", text = "Symbols Tree", command = "lsp:toggle-symbols-tree",
+        checked = function() return lsp.symbols_tree:is_visible() end },
+      core.menu_view.DIVIDER,
+      { id = "document-diagnostics", text = "Document Diagnostics", command = "lsp:view-document-diagnostics" },
+      { id = "all-diagnostics", text = "All Diagnostics", command = "lsp:view-all-diagnostics" },
+      { id = "diagnostics", text = "Show Diagnostics", command = "lsp:toggle-diagnostics",
+        checked = function() return config.plugins.lsp.show_diagnostics end },
+      core.menu_view.DIVIDER,
+      { id = "servers", text = "Servers", items = {
+        { id = "start", text = "Start", command = "lsp:start-servers" },
+        { id = "stop", text = "Stop", command = "lsp:stop-servers" },
+        { id = "restart", text = "Restart", command = "lsp:restart-servers" }
+      } }
+    } }
+  }, "lsp")
+end
+
 --
 -- Default Keybindings
 --
@@ -3160,7 +3196,7 @@ keymap.add {
 -- Register context menu items
 --
 core.add_thread(function()
-  if config.plugins.cotextmenu or type(config.plugins.cotextmenu) == "nil" then
+  if config.plugins.contextmenu ~= false then
     contextmenu = require "plugins.contextmenu"
 
     local function lsp_predicate(_, _, also_in_symbol)

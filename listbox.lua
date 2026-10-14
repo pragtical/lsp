@@ -14,6 +14,7 @@ local keymap = require "core.keymap"
 local util = require "plugins.lsp.util"
 local MarkdownView = require "core.markdownview"
 local RootView = require "core.rootview"
+local View = require "core.view"
 local DocView = require "core.docview"
 
 ---@class lsp.listbox.item
@@ -48,6 +49,8 @@ local listbox = {}
 ---@field items lsp.listbox.item[]
 ---@field shown_items lsp.listbox.item[]
 ---@field selected_item_idx integer
+---@field first_visible_idx integer First row in the list viewport
+---@field wheel_delta number Accumulated fractional wheel movement
 ---@field show_items_count boolean
 ---@field max_height integer
 ---@field active_view core.docview | nil
@@ -63,6 +66,8 @@ local settings = {
   items = {},
   shown_items = {},
   selected_item_idx = 1,
+  first_visible_idx = 1,
+  wheel_delta = 0,
   show_items_count = false,
   max_height = 6,
   active_view = nil,
@@ -79,6 +84,7 @@ local settings = {
 local mt = { __tostring = function(t) return t.text end }
 local markdown_view
 local markdown_rect
+local popup, sync_popup
 
 --------------------------------------------------------------------------------
 -- Private functions
@@ -189,11 +195,112 @@ local function get_suggestions_rect(active_view)
     end
   end
 
+  if View.set_floating then
+    x, y, width, height = core.root_view:clamp_floating_bounds(x, y, width, height)
+  end
   return x, y, width, height
 end
 
----@param av core.docview
-local function draw_markdown_box(av)
+---Count complete rows and clamp the first row after viewport size changes.
+---Excludes padding and the optional count footer.
+---@param height number Popup height
+---@param line_height number Row height
+---@return integer count Visible row count
+local function get_visible_rows(height, line_height)
+  local available = height - style.padding.y * 2
+  if settings.show_items_count then available = available - line_height end
+  local limit = settings.is_list and settings.max_height or #settings.shown_items
+  local rows = math.max(0, math.min(limit, #settings.shown_items,
+    math.floor(available / line_height + 0.001)))
+  if settings.is_list then
+    settings.first_visible_idx = math.min(settings.first_visible_idx,
+      math.max(1, #settings.shown_items - rows + 1))
+  end
+  return rows
+end
+
+---Select a result and keep keyboard navigation inside the current viewport.
+---@param index integer Result index, clamped to the available results
+local function select_item(index)
+  local av = settings.active_view
+  if not av or #settings.shown_items == 0 then return end
+  settings.selected_item_idx = common.clamp(index, 1, #settings.shown_items)
+  local _, _, _, height = get_suggestions_rect(av)
+  local rows = math.max(1, get_visible_rows(height,
+    av:get_font():get_height() + style.padding.y / 4))
+  if settings.selected_item_idx < settings.first_visible_idx then
+    settings.first_visible_idx = settings.selected_item_idx
+  elseif settings.selected_item_idx >= settings.first_visible_idx + rows then
+    settings.first_visible_idx = settings.selected_item_idx - rows + 1
+  end
+  settings.wheel_delta = 0
+  core.redraw = true
+end
+
+---Hit-test selectable rows, excluding the popup's padding and optional count footer.
+---@param x number Screen x coordinate
+---@param y number Screen y coordinate
+---@return integer? index Result under the pointer
+local function get_item_at(x, y)
+  local av = settings.active_view
+  if not av or not settings.is_list or markdown_view then return end
+  local rx, ry, rw, rh = get_suggestions_rect(av)
+  local line_height = av:get_font():get_height() + style.padding.y / 4
+  local rows = get_visible_rows(rh, line_height)
+  local row = math.floor((y - ry - style.padding.y) / line_height)
+  if x >= rx and x < rx + rw and row >= 0 and row < rows then
+    return settings.first_visible_idx + row
+  end
+end
+
+---Accept a clicked result through the same command and callback as keyboard selection.
+---@param button core.view.mousebutton Pressed mouse button
+---@param x number Screen x coordinate
+---@param y number Screen y coordinate
+---@return boolean handled Whether a result was accepted
+local function list_mouse_pressed(button, x, y)
+  if button ~= "left" then return false end
+  local index = get_item_at(x, y)
+  if not index then return false end
+  select_item(index)
+  command.perform "listbox:select"
+  return true
+end
+
+---Highlight a hovered result without moving the document caret or editor focus.
+---@param x number Screen x coordinate
+---@param y number Screen y coordinate
+---@return boolean handled Whether the pointer is over a selectable row
+local function list_mouse_moved(x, y)
+  local index = get_item_at(x, y)
+  if not index then return false end
+  if index ~= settings.selected_item_idx then select_item(index) end
+  core.request_cursor("arrow")
+  return true
+end
+
+---Scroll list rows independently of the selected result, retaining fractional deltas.
+---@param delta number Vertical wheel delta
+---@return boolean handled Whether a result list is active
+local function list_mouse_wheel(delta)
+  local av = settings.active_view
+  if not av or not settings.is_list or markdown_view then return false end
+  local _, _, _, height = get_suggestions_rect(av)
+  local rows = math.max(1, get_visible_rows(height,
+    av:get_font():get_height() + style.padding.y / 4))
+  settings.wheel_delta = settings.wheel_delta - delta
+  local steps = math.modf(settings.wheel_delta)
+  settings.wheel_delta = settings.wheel_delta - steps
+  settings.first_visible_idx = common.clamp(settings.first_visible_idx + steps,
+    1, math.max(1, #settings.shown_items - rows + 1))
+  core.redraw = true
+  return true
+end
+
+---Measure and position LSP Markdown near its document anchor.
+---Shows a floating MarkdownView on modern cores or draws it directly on legacy cores.
+---@param av core.docview Document containing the popup anchor
+local function position_markdown_box(av)
   if not markdown_view then
     return
   end
@@ -213,7 +320,10 @@ local function draw_markdown_box(av)
   local available_height = win_h - y - style.padding.y
   local height = math.min(content_height, math.max(available_height, 1), math.max(120 * SCALE, win_h * 0.55))
 
-  markdown_view:draw_at(x, y, width, height, style.background3, true)
+  if View.set_floating then
+    markdown_view:set_floating_bounds(x, y, width, height)
+    if not markdown_view.floating_visible then markdown_view:show_floating() end
+  else markdown_view:draw_at(x, y, width, height, style.background3, true) end
   markdown_rect = { x = x, y = y, w = width, h = height }
 end
 
@@ -248,15 +358,8 @@ local function draw_listbox(av)
   local line_height = font:get_height() + (padding_y / 4)
   local y = ry + padding_y
 
-  local max_height = settings.max_height
-
-  local show_count = (
-    #settings.shown_items <= max_height or not settings.is_list
-    ) and
-    #settings.shown_items or max_height
-
-  local start_index = settings.selected_item_idx > max_height and
-    (settings.selected_item_idx-(max_height-1)) or 1
+  local show_count = get_visible_rows(rh, line_height)
+  local start_index = settings.is_list and settings.first_visible_idx or 1
 
   for i=start_index, start_index+show_count-1, 1 do
     if not settings.shown_items[i] then
@@ -337,8 +440,11 @@ function listbox.add(elements)
 end
 
 function listbox.clear()
+  if popup then popup:hide_floating() end
+  if markdown_view and markdown_view.hide_floating then markdown_view:hide_floating() end
   settings.items = {}
   settings.selected_item_idx = 1
+  settings.first_visible_idx, settings.wheel_delta = 1, 0
   settings.shown_items = {}
   settings.line = nil
   settings.col = nil
@@ -353,9 +459,13 @@ end
 
 function listbox.hide()
   settings.active_view = nil
+  if popup then popup:hide_floating() end
+  if markdown_view and markdown_view.hide_floating then markdown_view:hide_floating() end
+  settings.active_view = nil
   settings.line = nil
   settings.col = nil
   settings.selected_item_idx = 1
+  settings.first_visible_idx, settings.wheel_delta = 1, 0
   settings.shown_items = {}
   markdown_view = nil
   markdown_rect = nil
@@ -365,7 +475,10 @@ end
 ---@param is_list? boolean
 ---@param position? lsp.listbox.position
 function listbox.show(is_list, position)
+  if markdown_view and markdown_view.hide_floating then markdown_view:hide_floating() end
+  markdown_view, markdown_rect = nil, nil
   set_position(position)
+  settings.selected_item_idx, settings.first_visible_idx, settings.wheel_delta = 1, 1, 0
 
   local active_view = get_active_view()
   if active_view then
@@ -375,6 +488,7 @@ function listbox.show(is_list, position)
       settings.is_list = is_list or false
       settings.shown_items = settings.items
     end
+    if sync_popup then sync_popup() end
     core.redraw = true
   end
 end
@@ -382,6 +496,7 @@ end
 ---@param text string
 ---@param position? lsp.listbox.position
 function listbox.show_text(text, position)
+  if markdown_view and markdown_view.hide_floating then markdown_view:hide_floating() end
   markdown_view = nil
   markdown_rect = nil
   if text and type("text") == "string" then
@@ -415,6 +530,27 @@ function listbox.show_markdown(text, position)
   if active_view and markdown_view then
     settings.active_view = active_view
     settings.last_line, settings.last_col = active_view.doc:get_selection()
+    if View.set_floating then
+      markdown_view:set_floating(true, { owner = popup, focus = "none" })
+      ---Render LSP Markdown inside its current floating bounds with the popup background.
+      ---@param view core.markdownview Documentation popup
+      markdown_view.draw = function(view)
+        view:draw_at(view.position.x, view.position.y, view.size.x, view.size.y, style.background3, true)
+      end
+      ---Scroll LSP documentation, treating Shift+wheel as horizontal movement.
+      ---@param view core.markdownview Documentation popup
+      ---@param y number Vertical wheel delta
+      ---@param x? number Horizontal wheel delta
+      ---@return boolean consumed Always true
+      markdown_view.on_mouse_wheel = function(view, y, x)
+        if keymap.modkeys.shift then x, y = y, 0 end
+        view.scroll.to.y = view.scroll.to.y - (y or 0) * config.mouse_wheel_scroll
+        view.scroll.to.x = view.scroll.to.x - (x or 0) * config.mouse_wheel_scroll
+        core.redraw = true
+        return true
+      end
+      sync_popup()
+    end
     core.redraw = true
   end
 end
@@ -547,6 +683,71 @@ end
 --------------------------------------------------------------------------------
 -- Patch event logic into RootView
 --------------------------------------------------------------------------------
+if View.set_floating then
+  popup = View()
+  ---Clear listbox state when its floating owner disappears or RootView removes it.
+  ---@param _ core.view Listbox companion
+  ---@param visible boolean Whether the popup remains shown
+  popup.on_floating_visibility_changed = function(_, visible)
+    if not visible and settings.active_view then listbox.hide() end
+  end
+  popup:set_floating(true, { focus = "none", interactive = false })
+  ---Compute list bounds, or an empty ownership rectangle while Markdown is shown.
+  ---@return number x Screen x coordinate
+  ---@return number y Screen y coordinate
+  ---@return number w List width, or zero for Markdown-only display
+  ---@return number h List height, or zero for Markdown-only display
+  popup.get_floating_bounds = function()
+    local av = settings.active_view
+    if av and not markdown_view then return get_suggestions_rect(av) end
+    return 0, 0, 0, 0
+  end
+  ---Ignore placement writes because this companion computes its bounds from its owner.
+  popup.set_floating_bounds = function() end
+  ---Close stale LSP results after owner or caret changes and place any Markdown popup.
+  popup.update = function()
+    local av = get_active_view()
+    if not av or av ~= settings.active_view then listbox.hide(); return end
+    local line, col = av.doc:get_selection()
+    if line ~= settings.last_line or col ~= settings.last_col then listbox.hide(); return end
+    if markdown_view then position_markdown_box(av) end
+  end
+  ---Draw list results for the saved document when Markdown is not being shown.
+  popup.draw = function()
+    if settings.active_view and not markdown_view then draw_listbox(settings.active_view) end
+  end
+  ---Accept a result while keeping the owning document focused.
+  ---@param _ core.view Listbox companion
+  ---@param button core.view.mousebutton Pressed mouse button
+  ---@param x number Screen x coordinate
+  ---@param y number Screen y coordinate
+  ---@return boolean handled Whether a result was accepted
+  popup.on_mouse_pressed = function(_, button, x, y)
+    return list_mouse_pressed(button, x, y)
+  end
+  ---Highlight the row under the pointer without scrolling the viewport.
+  ---@param _ core.view Listbox companion
+  ---@param x number Screen x coordinate
+  ---@param y number Screen y coordinate
+  ---@return boolean handled Whether the pointer is over a row
+  popup.on_mouse_moved = function(_, x, y)
+    return list_mouse_moved(x, y)
+  end
+  ---Scroll results without forwarding the wheel to the document.
+  ---@param _ core.view Listbox companion
+  ---@param y number Vertical wheel delta
+  ---@return boolean handled Whether a result list is active
+  popup.on_mouse_wheel = function(_, y)
+    return list_mouse_wheel(y)
+  end
+  ---Assign the current editor as owner, show the shared companion, and update it.
+  sync_popup = function()
+    popup.floating_options.owner = settings.active_view
+    popup.floating_options.interactive = settings.is_list and not markdown_view
+    if not popup.floating_visible then popup:show_floating() end
+    popup:update()
+  end
+else
 local root_view_update = RootView.update
 local root_view_draw = RootView.draw
 local root_view_on_mouse_pressed = RootView.on_mouse_pressed
@@ -585,7 +786,7 @@ RootView.draw = function(...)
       active_view and settings.active_view == active_view
     then
       if markdown_view then
-        core.root_view:defer_draw(draw_markdown_box, active_view)
+        core.root_view:defer_draw(position_markdown_box, active_view)
       elseif #settings.shown_items > 0 then
         -- draw suggestions box after everything else
         core.root_view:defer_draw(draw_listbox, active_view)
@@ -596,6 +797,7 @@ RootView.draw = function(...)
 end
 
 RootView.on_mouse_pressed = function(self, button, x, y, clicks)
+  if list_mouse_pressed(button, x, y) then return true end
   if markdown_view and point_over_rect(x, y, markdown_rect) then
     if markdown_view:on_mouse_pressed(button, x, y, clicks) then
       return true
@@ -612,6 +814,8 @@ RootView.on_mouse_released = function(self, button, x, y)
 end
 
 RootView.on_mouse_moved = function(self, x, y, dx, dy)
+  self.mouse.x, self.mouse.y = x, y
+  if list_mouse_moved(x, y) then return true end
   if markdown_view and (point_over_rect(x, y, markdown_rect) or markdown_view:scrollbar_dragging()) then
     local handled = markdown_view:on_mouse_moved(x, y, dx, dy)
     if handled then
@@ -630,6 +834,12 @@ RootView.on_mouse_moved = function(self, x, y, dx, dy)
 end
 
 RootView.on_mouse_wheel = function(self, y, x)
+  if settings.active_view and settings.is_list and not markdown_view then
+    local rx, ry, rw, rh = get_suggestions_rect(settings.active_view)
+    if point_over_rect(self.mouse.x, self.mouse.y, { x = rx, y = ry, w = rw, h = rh }) then
+      return list_mouse_wheel(y)
+    end
+  end
   if markdown_view and point_over_rect(core.root_view.mouse.x, core.root_view.mouse.y, markdown_rect) then
     if keymap.modkeys["shift"] then
       x = y
@@ -645,6 +855,8 @@ RootView.on_mouse_wheel = function(self, y, x)
     return true
   end
   return root_view_on_mouse_wheel(self, y, x)
+end
+
 end
 
 --------------------------------------------------------------------------------
@@ -672,7 +884,7 @@ command.add(predicate, {
 
   ["listbox:previous"] = function()
     if settings.is_list then
-      settings.selected_item_idx = math.max(settings.selected_item_idx - 1, 1)
+      select_item(settings.selected_item_idx - 1)
     else
       listbox.hide()
     end
@@ -680,9 +892,7 @@ command.add(predicate, {
 
   ["listbox:next"] = function()
     if settings.is_list then
-      settings.selected_item_idx = math.min(
-        settings.selected_item_idx + 1, #settings.shown_items
-      )
+      select_item(settings.selected_item_idx + 1)
     else
       listbox.hide()
     end

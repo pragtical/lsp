@@ -31,7 +31,8 @@ The pragtical configs directory should have:
 
 Stuff that is currently implemented:
 
-* Code auto completion (**ctrl+space**)
+* Code auto completion (**ctrl+space**), with mouse-wheel result scrolling
+  and click selection
 * Function signatures tooltip (**ctrl+shift+space**)
 * Current cursor symbol details tooltip on mouse hover or shortcut (**alt+a**)
 * Symbol renaming (**alt+r**)
@@ -48,6 +49,10 @@ Stuff that is currently implemented:
 * List all documents with diagnostics (**ctrl+alt+e**)
 * Snippets processing using the [snippets] plugin
 * Current document symbols tree view (**alt+shift+\\**)
+
+On editor versions with the application menu, LSP commands are also available
+under **Tools > Language Server**, using their command predicates and assigned
+shortcuts. Older editor versions retain the command palette and keybindings.
 
 ## Setting a LSP Server
 
