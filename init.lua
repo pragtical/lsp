@@ -334,8 +334,55 @@ lsp.user_typed = false
 ---@field doc core.doc | nil
 ---@field line integer
 ---@field col integer
+---@field view core.docview | nil
 ---@field triggered boolean
-lsp.hover_position = {doc = nil, line = 0, col = 0, triggered = false}
+lsp.hover_position = {
+  doc = nil, view = nil, line = 0, col = 0, triggered = false
+}
+
+---@type lsp.hover_position?
+local hover_popup
+local hover_dismiss_deadline
+
+local function cancel_pending_hover()
+  lsp.hover_timer:stop()
+  lsp.hover_position = { doc = nil, line = 0, col = 0, triggered = false }
+end
+
+local function cancel_mouse_hover()
+  cancel_pending_hover()
+  hover_dismiss_deadline = nil
+  if hover_popup then
+    hover_popup = nil
+    listbox.hide()
+  end
+end
+
+---@param target lsp.hover_position
+---@return boolean
+local function mouse_hover_is_valid(target)
+  return target == lsp.hover_position and target.triggered
+    and config.plugins.lsp.mouse_hover and core.active_view == target.view
+    and target.doc.lsp_open
+end
+
+local function schedule_hover_dismissal()
+  if not hover_popup or hover_dismiss_deadline then return end
+  local displayed = hover_popup
+  local deadline = system.get_time() + 0.3
+  hover_dismiss_deadline = deadline
+  core.add_thread(function()
+    while system.get_time() < deadline do
+      coroutine.yield(deadline - system.get_time())
+    end
+    if hover_dismiss_deadline == deadline and hover_popup == displayed then
+      -- A pending request for another symbol may still replace this display.
+      hover_popup = nil
+      hover_dismiss_deadline = nil
+      listbox.hide()
+    end
+  end)
+end
 
 ---@type lsp.timer
 lsp.hover_timer = Timer(300, true)
@@ -344,13 +391,47 @@ lsp.hover_timer.on_timer = function()
   lsp.request_hover(
     lsp.hover_position.doc,
     lsp.hover_position.line,
-    lsp.hover_position.col
+    lsp.hover_position.col,
+    false,
+    lsp.hover_position
   )
 end
 
 --
 -- Private functions
 --
+
+---@param target lsp.hover_position
+---@param view core.docview
+---@param line integer
+---@param col integer
+---@return boolean
+local function same_hover_target(target, view, line, col)
+  return target.view == view and target.line == line and target.col == col
+end
+
+local function retain_hover_popup()
+  hover_dismiss_deadline = nil
+  lsp.hover_timer:stop()
+  lsp.hover_position = hover_popup
+end
+
+---@param view core.docview
+---@param line integer
+---@param col integer
+local function queue_mouse_hover(view, line, col)
+  if same_hover_target(lsp.hover_position, view, line, col) then
+    lsp.hover_timer:reset()
+    return
+  end
+  local on_timer = lsp.hover_timer.on_timer
+  lsp.hover_timer:stop()
+  lsp.hover_position = { view = view, doc = view.doc, line = line, col = col, triggered = true }
+  -- A fresh timer cannot revive a stopped timer's sleeping coroutine.
+  lsp.hover_timer = Timer(config.plugins.lsp.mouse_hover_delay, true)
+  lsp.hover_timer.on_timer = on_timer
+  lsp.hover_timer:start()
+end
 
 ---Generate an lsp location object
 ---@param doc core.doc
@@ -1832,8 +1913,20 @@ local help_active_node = nil
 local help_bottom_node = nil
 --- Sends a request to applicable LSP servers for information about the
 --- symbol where the cursor is placed and shows it on a tooltip.
-function lsp.request_hover(doc, line, col, in_tab)
+---@param doc core.doc
+---@param line integer
+---@param col integer
+---@param in_tab? boolean
+---@param mouse_target? lsp.hover_position Pending mouse target; omitted for commands
+function lsp.request_hover(doc, line, col, in_tab, mouse_target)
+  if mouse_target then
+    if not mouse_hover_is_valid(mouse_target) then return end
+  else
+    cancel_mouse_hover()
+  end
   if not doc.lsp_open then return end
+  local version = doc.lsp_version
+  local selection_line, selection_col = doc:get_selection()
 
   for _, name in pairs(lsp.get_active_servers(doc.filename, true)) do
     local server = lsp.servers_running[name]
@@ -1841,6 +1934,12 @@ function lsp.request_hover(doc, line, col, in_tab)
       server:push_request('textDocument/hover', {
         params = get_buffer_position_params(doc, line, col),
         callback = function(server, response)
+          if mouse_target then
+            local current_line, current_col = doc:get_selection()
+            if not mouse_hover_is_valid(mouse_target) or doc.lsp_version ~= version
+              or current_line ~= selection_line or current_col ~= selection_col
+            then return end
+          end
           if response.result and response.result.contents then
             ---@cast response.result lsp.protocol.Hover
             local content = response.result.contents
@@ -1868,10 +1967,22 @@ function lsp.request_hover(doc, line, col, in_tab)
             if text and #text > 0 then
               text = text:gsub("^[\n%s]+", ""):gsub("[\n%s]+$", "")
               if not in_tab then
+                local on_hide
+                if mouse_target then
+                  hover_popup = mouse_target
+                  hover_dismiss_deadline = nil
+                  on_hide = function()
+                    if hover_popup == mouse_target then
+                      hover_popup = nil
+                      cancel_pending_hover()
+                      hover_dismiss_deadline = nil
+                    end
+                  end
+                end
                 if kind == "markdown" then
-                  listbox.show_markdown(text, { line = line, col = col })
+                  listbox.show_markdown(text, { line = line, col = col }, on_hide)
                 else
-                  listbox.show_text(text, { line = line, col = col })
+                  listbox.show_text(text, { line = line, col = col }, on_hide)
                 end
               else
                 local line1, col1 = translate.start_of_word(doc, line, col)
@@ -2597,6 +2708,9 @@ local doc_raw_insert = Doc.raw_insert
 local doc_raw_remove = Doc.raw_remove
 local root_view_on_text_input = RootView.on_text_input
 local root_view_on_mouse_moved = RootView.on_mouse_moved
+local root_view_on_mouse_pressed = RootView.on_mouse_pressed
+local root_view_on_mouse_left = RootView.on_mouse_left
+local root_view_on_key_pressed = RootView.on_key_pressed
 
 function Doc:load(...)
   local res = doc_load(self, ...)
@@ -2741,14 +2855,25 @@ function RootView:on_text_input(text)
 end
 
 function RootView:on_mouse_moved(x, y, dx, dy)
-  root_view_on_mouse_moved(self, x, y, dx, dy)
+  local handled = root_view_on_mouse_moved(self, x, y, dx, dy)
 
-  if not config.plugins.lsp.mouse_hover then return end
-  if self.get_floating_view_at and self:get_floating_view_at(x, y) then return end
+  if not config.plugins.lsp.mouse_hover then cancel_mouse_hover(); return handled end
+
+  if hover_popup and (listbox.is_pointer_over(x, y) or listbox.has_pointer_capture()) then
+    retain_hover_popup()
+    return handled
+  end
 
   local av = get_active_docview()
+  local floating = self.get_floating_view_at and self:get_floating_view_at(x, y)
+  if (floating and floating ~= av) or self.grab
+    or (contextmenu and contextmenu.show_context_menu)
+  then cancel_mouse_hover(); return handled end
 
-  if av and av.doc.lsp_open then
+  if av and av.doc.lsp_open
+    and x >= av.position.x and x < av.position.x + av.size.x
+    and y >= av.position.y and y < av.position.y + av.size.y
+  then
     ---@type core.doc
     local doc = av.doc
     local line, col = av:resolve_screen_position(x, y)
@@ -2766,43 +2891,43 @@ function RootView:on_mouse_moved(x, y, dx, dy)
       and
       y >= ly and y <= (ly + av:get_line_height())
     then
-      lsp.hover_timer:reset()
-
-      if
-        (
-          lsp.hover_position.doc ~= doc
-          or
-          lsp.hover_position.line ~= line1
-          or
-          lsp.hover_position.col ~= col1
-        )
-        and
-        (
-          not contextmenu or not contextmenu.show_context_menu
-        )
-      then
-        listbox.hide()
-
-        lsp.hover_position.triggered = true
-        lsp.hover_position.doc = doc
-        lsp.hover_position.line = line1
-        lsp.hover_position.col = col1
-
-        if not lsp.hover_timer:running() then
-          lsp.hover_timer:set_interval(config.plugins.lsp.mouse_hover_delay)
-          lsp.hover_timer:start()
-        end
+      if hover_popup and same_hover_target(hover_popup, av, line1, col1) then
+        retain_hover_popup()
+      else
+        schedule_hover_dismissal()
+        queue_mouse_hover(av, line1, col1)
       end
-    else
-      if lsp.hover_position.triggered then
-        listbox.hide()
-        lsp.hover_position.triggered = false
-        lsp.hover_position.doc = nil
-        lsp.hover_position.line = 0
-        lsp.hover_position.col = 0
-      end
-      lsp.hover_timer:stop()
+      return handled
     end
+  end
+  if lsp.hover_position.triggered then cancel_pending_hover() end
+  schedule_hover_dismissal()
+  return handled
+end
+
+function RootView:on_mouse_pressed(button, x, y, clicks)
+  if not (hover_popup and listbox.is_pointer_over(x, y)) then cancel_mouse_hover() end
+  return root_view_on_mouse_pressed(self, button, x, y, clicks)
+end
+
+function RootView:on_mouse_left(...)
+  local handled = root_view_on_mouse_left(self, ...)
+  if not listbox.has_pointer_capture() then
+    cancel_pending_hover()
+    schedule_hover_dismissal()
+  end
+  return handled
+end
+
+if root_view_on_key_pressed then
+  function RootView:on_key_pressed(stroke, ...)
+    local handled = root_view_on_key_pressed(self, stroke, ...)
+    if stroke == "escape" then
+      local displayed = hover_popup ~= nil
+      cancel_mouse_hover()
+      return handled or displayed
+    end
+    return handled
   end
 end
 
@@ -3274,12 +3399,7 @@ core.add_thread(function()
 
     local contextmenu_show = contextmenu.show
     function contextmenu:show(...)
-      if lsp.hover_position.triggered then
-        lsp.hover_timer:stop()
-        listbox.hide()
-        lsp.hover_position.triggered = false
-        lsp.hover_position.doc = nil
-      end
+      cancel_mouse_hover()
       return contextmenu_show(self, ...)
     end
   end

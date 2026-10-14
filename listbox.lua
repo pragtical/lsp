@@ -58,7 +58,9 @@ local listbox = {}
 ---@field col integer | nil
 ---@field last_line integer | nil
 ---@field last_col integer | nil
+---@field last_version integer | nil
 ---@field callback lsp.listbox.callback | nil
+---@field on_hide? fun()
 ---@field is_list boolean
 ---@field has_fuzzy_search boolean
 ---@field above_text boolean
@@ -440,16 +442,8 @@ function listbox.add(elements)
 end
 
 function listbox.clear()
-  if popup then popup:hide_floating() end
-  if markdown_view and markdown_view.hide_floating then markdown_view:hide_floating() end
+  listbox.hide()
   settings.items = {}
-  settings.selected_item_idx = 1
-  settings.first_visible_idx, settings.wheel_delta = 1, 0
-  settings.shown_items = {}
-  settings.line = nil
-  settings.col = nil
-  markdown_view = nil
-  markdown_rect = nil
 end
 
 ---@param element lsp.listbox.item
@@ -458,25 +452,54 @@ function listbox.append(element)
 end
 
 function listbox.hide()
+  local on_hide, markdown = settings.on_hide, markdown_view
+  settings.on_hide = nil
   settings.active_view = nil
+  markdown_view, markdown_rect = nil, nil
   if popup then popup:hide_floating() end
-  if markdown_view and markdown_view.hide_floating then markdown_view:hide_floating() end
-  settings.active_view = nil
+  if markdown and markdown.hide_floating then markdown:hide_floating() end
   settings.line = nil
   settings.col = nil
   settings.selected_item_idx = 1
   settings.first_visible_idx, settings.wheel_delta = 1, 0
   settings.shown_items = {}
-  markdown_view = nil
-  markdown_rect = nil
   core.redraw = true
+  if on_hide then on_hide() end
+end
+
+---Check the current popup's bounds without testing the document beneath it.
+---@param x number Screen x coordinate
+---@param y number Screen y coordinate
+---@return boolean
+function listbox.is_pointer_over(x, y)
+  if not settings.active_view then return false end
+  if markdown_view then
+    if View.set_floating then
+      local hovered = core.root_view:get_floating_view_at(x, y)
+      return hovered ~= nil and markdown_view:owns_view(hovered)
+    end
+    return point_over_rect(x, y, markdown_rect) or false
+  end
+  local rx, ry, rw, rh = get_suggestions_rect(settings.active_view)
+  return point_over_rect(x, y, { x = rx, y = ry, w = rw, h = rh }) or false
+end
+
+---Keep a popup interactive while a captured drag moves outside its bounds.
+---@return boolean
+function listbox.has_pointer_capture()
+  if not settings.active_view then return false end
+  if View.set_floating then
+    local grab = core.root_view.grab
+    return grab ~= nil and popup:owns_view(grab.view)
+  end
+  return markdown_view ~= nil
+    and (markdown_view.selecting or markdown_view:scrollbar_dragging()) or false
 end
 
 ---@param is_list? boolean
 ---@param position? lsp.listbox.position
 function listbox.show(is_list, position)
-  if markdown_view and markdown_view.hide_floating then markdown_view:hide_floating() end
-  markdown_view, markdown_rect = nil, nil
+  listbox.hide()
   set_position(position)
   settings.selected_item_idx, settings.first_visible_idx, settings.wheel_delta = 1, 1, 0
 
@@ -484,6 +507,7 @@ function listbox.show(is_list, position)
   if active_view then
     settings.active_view = active_view
     settings.last_line, settings.last_col = active_view.doc:get_selection()
+    settings.last_version = active_view.doc.lsp_version
     if settings.items and #settings.items > 0 then
       settings.is_list = is_list or false
       settings.shown_items = settings.items
@@ -495,10 +519,8 @@ end
 
 ---@param text string
 ---@param position? lsp.listbox.position
-function listbox.show_text(text, position)
-  if markdown_view and markdown_view.hide_floating then markdown_view:hide_floating() end
-  markdown_view = nil
-  markdown_rect = nil
+---@param on_hide? fun() Called once when this display closes or is replaced
+function listbox.show_text(text, position, on_hide)
   if text and type("text") == "string" then
     local win_w = system.get_window_size(core.window) - style.padding.x * 6
     text = util.wrap_text(text, style.font, win_w)
@@ -511,11 +533,16 @@ function listbox.show_text(text, position)
   end
 
   listbox.show(false, position)
+  if settings.active_view then
+    settings.on_hide = on_hide
+    if sync_popup then sync_popup() end
+  end
 end
 
 ---@param text string
 ---@param position? lsp.listbox.position
-function listbox.show_markdown(text, position)
+---@param on_hide? fun() Called once when this display closes or is replaced
+function listbox.show_markdown(text, position, on_hide)
   listbox.clear()
   if text and type(text) == "string" and #text > 0 then
     markdown_view = MarkdownView({
@@ -529,9 +556,19 @@ function listbox.show_markdown(text, position)
   local active_view = get_active_view()
   if active_view and markdown_view then
     settings.active_view = active_view
+    settings.on_hide = on_hide
     settings.last_line, settings.last_col = active_view.doc:get_selection()
+    settings.last_version = active_view.doc.lsp_version
     if View.set_floating then
-      markdown_view:set_floating(true, { owner = popup, focus = "none" })
+      markdown_view:set_floating(true, {
+        owner = popup, focus = "none", interactive = true,
+        dismiss_on_escape = on_hide ~= nil,
+        dismiss_on_outside_click = on_hide ~= nil,
+        consume_outside_click = false
+      })
+      markdown_view.on_floating_visibility_changed = function(view, visible)
+        if not visible and markdown_view == view then listbox.hide() end
+      end
       ---Render LSP Markdown inside its current floating bounds with the popup background.
       ---@param view core.markdownview Documentation popup
       markdown_view.draw = function(view)
@@ -709,7 +746,9 @@ if View.set_floating then
     local av = get_active_view()
     if not av or av ~= settings.active_view then listbox.hide(); return end
     local line, col = av.doc:get_selection()
-    if line ~= settings.last_line or col ~= settings.last_col then listbox.hide(); return end
+    if line ~= settings.last_line or col ~= settings.last_col
+      or av.doc.lsp_version ~= settings.last_version
+    then listbox.hide(); return end
     if markdown_view then position_markdown_box(av) end
   end
   ---Draw list results for the saved document when Markdown is not being shown.
@@ -744,6 +783,8 @@ if View.set_floating then
   sync_popup = function()
     popup.floating_options.owner = settings.active_view
     popup.floating_options.interactive = settings.is_list and not markdown_view
+    popup.floating_options.dismiss_on_outside_click = settings.on_hide ~= nil and not markdown_view
+    popup.floating_options.consume_outside_click = false
     if not popup.floating_visible then popup:show_floating() end
     popup:update()
   end
@@ -771,6 +812,7 @@ RootView.update = function(...)
       settings.active_view ~= active_view
       or
       line ~= settings.last_line or col ~= settings.last_col
+      or active_view.doc.lsp_version ~= settings.last_version
     then
       listbox.hide()
     end
