@@ -7,6 +7,7 @@ local Object = require "core.object"
 ---@field public single_shot boolean
 ---@field private started boolean
 ---@field private last_run integer
+---@overload fun(interval:integer,single_shot:boolean):lsp.timer
 local Timer = Object:extend()
 
 ---Constructor
