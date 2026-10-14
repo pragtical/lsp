@@ -396,7 +396,7 @@ local function get_buffer_range_params(doc, line1, col1, line2, col2)
       }
     },
     context = {
-      diagnostics = {}
+      diagnostics = json.array()
     }
   }
 end
@@ -423,7 +423,7 @@ local function get_code_action_diagnostics(doc, range)
   local diagnostic_messages = diagnostics.get(doc.filename)
     or diagnostics.get(core.project_absolute_path(doc.filename))
     or diagnostics.get(core.normalize_to_project_dir(doc.abs_filename or doc.filename))
-  local result = {}
+  local result = json.array()
 
   for _, diagnostic in ipairs(diagnostic_messages or {}) do
     if range_intersects_diagnostic(range, diagnostic) then

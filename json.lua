@@ -30,6 +30,16 @@ local error_message = ""
 -- Lets us explicitly add null values to table elements
 json.null = "{{json::null}}"
 
+local array_mt = {}
+
+---Mark a table as a JSON array, including when it is empty.
+---@generic T
+---@param values? T[]
+---@return T[]
+function json.array(values)
+  return setmetatable(values or {}, array_mt)
+end
+
 -- Treat numbers longer than 14 digits as a string by adding this to the
 -- beginning of the string for encoder to recognize. This prevents any data
 -- loss due to lua 5.2 not supporting big integer numbers and converting big
@@ -79,7 +89,7 @@ local function encode_table(val, stack)
 
   stack[val] = true
 
-  if rawget(val, 1) ~= nil or next(val) == nil then
+  if rawget(val, 1) ~= nil or getmetatable(val) == array_mt then
     -- Treat as array -- check keys are valid and it is not sparse
     local n = 0
     for k in pairs(val) do
@@ -96,11 +106,7 @@ local function encode_table(val, stack)
       table.insert(res, encode(v, stack))
     end
     stack[val] = nil
-    if #res > 0 then
-      return "[" .. table.concat(res, ",") .. "]"
-    else
-      return "{}"
-    end
+    return "[" .. table.concat(res, ",") .. "]"
 
   else
     -- Treat as an object
