@@ -25,7 +25,7 @@ local SearchReplaceList = require "widget.searchreplacelist"
 ---@field private line widget.line
 ---@field private list widget.searchreplacelist
 ---@field private resource_list widget.listbox?
----@overload fun():lsp.ui.renamesymbol
+---@overload fun(workspace_edit:lsp.protocol.WorkspaceEdit):lsp.ui.renamesymbol
 local RenameSymbol = Widget:extend()
 
 ---Indicates if a rename procedure is taking place.

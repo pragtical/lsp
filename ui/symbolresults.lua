@@ -20,9 +20,10 @@ local Lsp = {}
 ---@field private line widget.line
 ---@field private list_container widget
 ---@field private list widget.listbox
----@overload fun():lsp.ui.symbolresults
+---@overload fun(symbol?:string):lsp.ui.symbolresults
 local SymbolResults = Widget:extend()
 
+---@param symbol? string
 function SymbolResults:new(symbol)
   SymbolResults.super.new(self)
 
