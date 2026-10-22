@@ -302,12 +302,17 @@ function SymbolsTree:add_results(results, top_level)
 
   for i=1, #results do
     local result = results[i]
+    -- Defensive check on .kind to be in the range of [SymbolKind](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#symbolKind)
+    if not (1 <= result.kind and result.kind <= 26) then
+      goto skip_invalid_symbol_kind
+    end
     local item = create_symbol_item(self, result, top_level, #results)
     table.insert(items, item)
     table.insert(symbol_items, {
       result = result,
       item = item
     })
+    ::skip_invalid_symbol_kind::
   end
 
   for _, symbol_item in ipairs(symbol_items) do
