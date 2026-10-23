@@ -20,10 +20,14 @@ local Lsp = nil
 
 ---@class lsp.ui.symbolstree.itemdata
 ---@field range lsp.protocol.Range
----@field type lsp.protocol.SymbolKind
+---@field type lsp.protocol.SymbolKind | -1
 ---@field uri? lsp.protocol.DocumentUri
 
+-- UI-only kind; zero is reserved for the All filter.
+local UNKNOWN_SYMBOL_KIND = -1
+
 local SYMBOLS_KIND_ICONS = {
+  [UNKNOWN_SYMBOL_KIND] = { name = "Unknown", icon = '' }, -- U+F128
   { name = "File",          color = "string",   icon = '' }, -- U+F718
   { name = "Module",        color = "literal",  icon = '' }, -- U+F487
   { name = "Namespace",     color = "literal",  icon = '' }, -- U+EA8B
@@ -51,6 +55,12 @@ local SYMBOLS_KIND_ICONS = {
   { name = "Operator",      color = "operator", icon = '' }, -- U+F694
   { name = "TypeParameter", color = "literal",  icon = '' }  -- U+EA92
 }
+
+---@param kind any
+---@return lsp.protocol.SymbolKind | -1
+local function get_symbol_kind(kind)
+  return SYMBOLS_KIND_ICONS[kind] and kind or UNKNOWN_SYMBOL_KIND
+end
 
 ---@class lsp.ui.symbolstree : widget
 ---@field current_doc? core.doc
@@ -101,10 +111,8 @@ function SymbolsTree:new()
   function self.tree:get_item_icon(item, active, hovered)
     local character = item.icon
     local font = self.icon_font or style.icon_font
-    local color = item.data and
-      style.syntax[SYMBOLS_KIND_ICONS[item.data.type].color]
-      or
-      style.text
+    local kind = SYMBOLS_KIND_ICONS[get_symbol_kind(item.data and item.data.type)]
+    local color = style.syntax[kind.color] or style.text
     if active or hovered then
       color = common.lighten_color(color, 40)
     end
@@ -255,10 +263,11 @@ end
 ---@param total_results? integer
 ---@return widget.treelist.item
 local function create_symbol_item(self, result, top_level, total_results)
-  local kind = SYMBOLS_KIND_ICONS[result.kind]
+  local kind_id = get_symbol_kind(result.kind)
+  local kind = SYMBOLS_KIND_ICONS[kind_id]
   local childs = result.children and self:add_results(result.children) or nil
 
-  self.kinds[kind.name] = result.kind
+  self.kinds[kind.name] = kind_id
 
   ---@type widget.treelist.item
   local item = {
@@ -278,7 +287,7 @@ local function create_symbol_item(self, result, top_level, total_results)
   ---@type lsp.ui.symbolstree.itemdata
   item.data = {
     range = result.selectionRange or result.location.range,
-    type = result.kind,
+    type = kind_id,
   }
   if result.uri then
     item.data.uri = result.uri
@@ -302,17 +311,12 @@ function SymbolsTree:add_results(results, top_level)
 
   for i=1, #results do
     local result = results[i]
-    -- Defensive check on .kind to be in the range of [SymbolKind](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#symbolKind)
-    if not (1 <= result.kind and result.kind <= 26) then
-      goto skip_invalid_symbol_kind
-    end
     local item = create_symbol_item(self, result, top_level, #results)
     table.insert(items, item)
     table.insert(symbol_items, {
       result = result,
       item = item
     })
-    ::skip_invalid_symbol_kind::
   end
 
   for _, symbol_item in ipairs(symbol_items) do
