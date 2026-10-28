@@ -505,11 +505,13 @@ function SymbolsTree:update_symbols()
               self.symbols_loaded = false
             end
             self.fetching_docs[doc.abs_filename] = nil
+            if doc == active_doc then core.redraw = true end
           end,
           on_expired = function()
             -- retry if request expired without response
             self:clear_current_doc(doc)
             self.fetching_docs[doc.abs_filename] = nil
+            if core.request_update then core.request_update() end
           end
         })
         break
@@ -518,6 +520,7 @@ function SymbolsTree:update_symbols()
     if not pushed then
       self:clear_current_doc(doc)
       self.fetching_docs[doc.abs_filename] = nil
+      if core.request_update then core.request_update() end
     end
   end)
 end

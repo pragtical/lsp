@@ -126,6 +126,7 @@ function diagnostics.add(filename, messages)
     diagnostics.list[index].messages = messages
   end
 
+  core.redraw = true
   return true
 end
 
@@ -137,6 +138,7 @@ function diagnostics.clear(filename)
   if index then
     table.remove(diagnostics.list, index)
     diagnostics.count = diagnostics.count - 1
+    core.redraw = true
   end
 end
 

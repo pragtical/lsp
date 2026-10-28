@@ -81,6 +81,7 @@ local snippets_found, snippets = pcall(require, "plugins.snippets")
 -- Main plugin functionality
 --
 local lsp = {}
+local start_server_polling
 
 --
 -- Plugin settings
@@ -1084,6 +1085,7 @@ function lsp.start_server(filename, project_directory)
           client.yield_on_reads = config.plugins.lsp.more_yielding
 
           lsp.servers_running[name] = client
+          start_server_polling()
 
           -- We overwrite the default log function to log messages on pragtical
           function client:log(message, ...)
@@ -2641,62 +2643,66 @@ end
 -- Thread to process server requests and responses
 -- without blocking entirely the editor.
 --
-core.add_background_thread(function()
-  while true do
-    local servers_running = false
-    for _,server in pairs(lsp.servers_running) do
-      -- Send raw data to server which is usually big and slow in a
-      -- non blocking way by creating a coroutine just for it.
-      if #server.raw_list > 0 then
-        local raw_send = coroutine.create(function()
-          server:process_raw()
-        end)
-        coroutine.resume(raw_send)
-        while coroutine.status(raw_send) ~= "dead" do
-          -- while sending raw request we only read from lsp to not
-          -- conflict with the written raw data so remember no calls
-          -- here to: server:process_client_responses()
-          -- or server:process_notifications()
-          server:process_errors(config.plugins.lsp.log_server_stderr)
-          server:process_responses()
-          coroutine.yield(0.001)
+---Start one transport worker while language servers are running.
+start_server_polling = function()
+  if core.threads[lsp] or not next(lsp.servers_running) then return end
+  core.add_background_thread(function()
+    while next(lsp.servers_running) do
+      local servers_running = false
+      for _,server in pairs(lsp.servers_running) do
+        -- Send raw data to server which is usually big and slow in a
+        -- non blocking way by creating a coroutine just for it.
+        if #server.raw_list > 0 then
+          local raw_send = coroutine.create(function()
+            server:process_raw()
+          end)
           coroutine.resume(raw_send)
+          while coroutine.status(raw_send) ~= "dead" do
+            -- while sending raw request we only read from lsp to not
+            -- conflict with the written raw data so remember no calls
+            -- here to: server:process_client_responses()
+            -- or server:process_notifications()
+            server:process_errors(config.plugins.lsp.log_server_stderr)
+            server:process_responses()
+            coroutine.yield(0.001)
+            coroutine.resume(raw_send)
+          end
         end
+
+        if not config.plugins.lsp.more_yielding then
+          server:process_notifications()
+          server:process_requests()
+          server:process_responses()
+          server:process_client_responses()
+        else
+          server:process_notifications()
+          coroutine.yield()
+          server:process_requests()
+          coroutine.yield()
+          server:process_responses()
+          server:process_client_responses()
+          coroutine.yield()
+        end
+
+        server:process_errors(config.plugins.lsp.log_server_stderr)
+
+        servers_running = true
       end
 
-      if not config.plugins.lsp.more_yielding then
-        server:process_notifications()
-        server:process_requests()
-        server:process_responses()
-        server:process_client_responses()
+      if servers_running then
+        local wait = 1 / config.plugins.lsp.checks_per_second
+        if not system.window_has_focus(core.window) then
+          wait = 1
+        elseif config.plugins.lsp.more_yielding then
+          wait = 0
+        end
+        coroutine.yield(wait)
       else
-        server:process_notifications()
-        coroutine.yield()
-        server:process_requests()
-        coroutine.yield()
-        server:process_responses()
-        server:process_client_responses()
-        coroutine.yield()
+        coroutine.yield(2)
       end
-
-      server:process_errors(config.plugins.lsp.log_server_stderr)
-
-      servers_running = true
     end
-
-    if servers_running then
-      local wait = 1 / config.plugins.lsp.checks_per_second
-      if not system.window_has_focus(core.window) then
-        wait = 1
-      elseif config.plugins.lsp.more_yielding then
-        wait = 0
-      end
-      coroutine.yield(wait)
-    else
-      coroutine.yield(2)
-    end
-  end
-end)
+  end, lsp)
+end
 
 --
 -- Events patching
