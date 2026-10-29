@@ -743,6 +743,7 @@ local function autocomplete_onhover(index, item)
       params = completion_item,
       callback = function(server, response)
         if response.result then
+          local previous_desc = item.desc
           local symbol = response.result
           if symbol.detail and #item.desc <= 0 then
             item.desc = symbol.detail
@@ -764,6 +765,7 @@ local function autocomplete_onhover(index, item)
           item.desc = item.desc:gsub("[%s\n]+$", "")
             :gsub("^[%s\n]+", "")
             :gsub("\n\n\n+", "\n\n")
+          if item.desc ~= previous_desc then core.redraw = true end
 
           if server.verbose then
             server:log(
