@@ -2721,6 +2721,7 @@ local root_view_on_mouse_left = RootView.on_mouse_left
 local root_view_on_key_pressed = RootView.on_key_pressed
 
 function Doc:load(...)
+  util.invalidate_position_cache(self)
   local res = doc_load(self, ...)
   -- skip new files
   if self.filename and config.plugins.lsp.autostart_server then
@@ -2751,6 +2752,7 @@ function Doc:save(...)
 end
 
 function Doc:on_close()
+  util.invalidate_position_cache(self)
   doc_on_close(self)
 
   -- skip new files
@@ -2787,7 +2789,7 @@ function Doc:on_close()
   end
 end
 
-local function add_change(self, text, line1, col1, line2, col2)
+local function add_change(self, text, line1, col1, line2, col2, active_servers)
   if not self.lsp_changes then
     self.lsp_changes = {}
     self.lsp_version = 0
@@ -2798,7 +2800,7 @@ local function add_change(self, text, line1, col1, line2, col2)
   change.range["start"] = {line = line1-1, character = col1-1}
   change.range["end"] = {line = line2-1, character = col2-1}
 
-  for _, name in pairs(lsp.get_active_servers(self.filename, true)) do
+  for _, name in ipairs(active_servers) do
     local server = lsp.servers_running[name]
     if not self.lsp_changes[server] then
       self.lsp_changes[server] = {}
@@ -2815,37 +2817,44 @@ local function add_change(self, text, line1, col1, line2, col2)
 end
 
 function Doc:raw_insert(line, col, text, undo_stack, time)
+  local old_text, old_count = self.lines[line], #self.lines
+  local active_servers = self.filename and lsp.get_active_servers(self.filename, true)
+  local lcol
+  if active_servers and #active_servers > 0 then
+    lcol = util.doc_utf8_to_utf16(self, line, col)
+  end
   doc_raw_insert(self, line, col, text, undo_stack, time)
-
-  -- skip new files
-  if not self.filename then return end
-
-  col = util.doc_utf8_to_utf16(self, line, col)
+  util.invalidate_position_cache(self, line, col, old_text, #self.lines - old_count)
+  if not lcol then return end
 
   if self.lsp_open then
     if not lsp.symbols_tree:is_visible() then self.lsp_symbols = nil end
-    add_change(self, text, line, col, line, col)
+    add_change(self, text, line, lcol, line, lcol, active_servers)
     lsp.update_document(self)
-  elseif #lsp.get_active_servers(self.filename, true) > 0 then
-    add_change(self, text, line, col, line, col)
+  else
+    add_change(self, text, line, lcol, line, lcol, active_servers)
   end
 end
 
 function Doc:raw_remove(line1, col1, line2, col2, undo_stack, time)
-  local lcol1 = util.doc_utf8_to_utf16(self, line1, col1)
-  local lcol2 = util.doc_utf8_to_utf16(self, line2, col2)
+  local old_text, old_count = self.lines[line1], #self.lines
+  local active_servers = self.filename and lsp.get_active_servers(self.filename, true)
+  local lcol1, lcol2
+  if active_servers and #active_servers > 0 then
+    lcol1 = util.doc_utf8_to_utf16(self, line1, col1)
+    lcol2 = util.doc_utf8_to_utf16(self, line2, col2)
+  end
 
   doc_raw_remove(self, line1, col1, line2, col2, undo_stack, time)
-
-  -- skip new files
-  if not self.filename then return end
+  util.invalidate_position_cache(self, line1, col1, old_text, #self.lines - old_count)
+  if not lcol1 then return end
 
   if self.lsp_open then
     if not lsp.symbols_tree:is_visible() then self.lsp_symbols = nil end
-    add_change(self, "", line1, lcol1, line2, lcol2)
+    add_change(self, "", line1, lcol1, line2, lcol2, active_servers)
     lsp.update_document(self)
-  elseif #lsp.get_active_servers(self.filename, true) > 0 then
-    add_change(self, "", line1, lcol1, line2, lcol2)
+  else
+    add_change(self, "", line1, lcol1, line2, lcol2, active_servers)
   end
 end
 

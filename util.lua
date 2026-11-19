@@ -11,6 +11,187 @@ local json = require "plugins.lsp.json"
 
 local util = {}
 
+local POSITION_INDEX_MIN_LENGTH = 4096
+local POSITION_INDEX_STEP = 2048
+
+---@class lsp.util.positionindex
+---@field text string Indexed document line
+---@field bytes integer[] Byte columns at character boundaries
+---@field units integer[] Corresponding UTF-16 columns
+---@field invalid? boolean Whether indexing encountered invalid UTF-8
+
+-- These indexes must survive Doc:clear_cache so edits can retain their prefix.
+local position_indexes = setmetatable({}, { __mode = "k" })
+
+---Find the last checkpoint at or before a column in either coordinate space.
+---@param offsets integer[]
+---@param column integer
+---@return integer index
+local function find_position(offsets, column)
+  local low, high = 1, #offsets
+  while low < high do
+    local middle = math.floor((low + high + 1) / 2)
+    if offsets[middle] <= column then low = middle else high = middle - 1 end
+  end
+  return low
+end
+
+---Get a line's sparse index, rejecting reloads and unreported text changes.
+---@param doc core.doc
+---@param line integer
+---@return lsp.util.positionindex? index Nil for short lines
+---@return string text
+local function get_position_index(doc, line)
+  local text = doc.lines[line] or ""
+  local cache = position_indexes[doc]
+  if cache and cache.lines ~= doc.lines then
+    position_indexes[doc], cache = nil, nil
+  end
+  if #text < POSITION_INDEX_MIN_LENGTH then
+    if cache then cache.entries[line] = nil end
+    return nil, text
+  end
+  if not cache then
+    cache = { lines = doc.lines, entries = {} }
+    position_indexes[doc] = cache
+  end
+  local index = cache.entries[line]
+  if not index or index.text ~= text then
+    index = { text = text, bytes = { 1 }, units = { 1 } }
+    cache.entries[line] = index
+  end
+  return index, text
+end
+
+---Extend an index only as far as the requested byte or UTF-16 column.
+---Count bounded chunks in native code, including supplementary surrogate pairs.
+---@param index lsp.util.positionindex
+---@param column integer
+---@param to_utf16 boolean Whether the input column is a byte offset
+---@return boolean valid
+local function extend_position_index(index, column, to_utf16)
+  if index.invalid then return false end
+  local offsets = to_utf16 and index.bytes or index.units
+  local count, text = #index.bytes, index.text
+  while offsets[count] < column and index.bytes[count] <= #text do
+    local first = index.bytes[count]
+    local next_byte = math.min(first + POSITION_INDEX_STEP, #text + 1)
+    while next_byte > first and next_byte <= #text and common.is_utf8_cont(text, next_byte) do
+      next_byte = next_byte - 1
+    end
+    if next_byte == first then
+      index.invalid = true
+      return false
+    end
+    local chunk = text:sub(first, next_byte - 1)
+    local length = utf8extra.len(chunk)
+    if not length then
+      index.invalid = true
+      return false
+    end
+    local _, supplementary = chunk:gsub("[\240-\244]", "")
+    index.bytes[count + 1] = next_byte
+    index.units[count + 1] = index.units[count] + length + supplementary
+    count = count + 1
+  end
+  return true
+end
+
+---Convert a short line using the original character-boundary rounding rules.
+---@param text string
+---@param column integer Already clamped to the stored line length
+---@param to_utf16 boolean
+---@return integer column
+local function convert_position_text(text, column, to_utf16)
+  if #text == utf8extra.len(text) or column == 1 then return column end
+  local units, last_byte = 1, 1
+  for pos, code in utf8extra.next, text do
+    if (to_utf16 and pos or units) >= column then
+      return to_utf16 and units or pos
+    end
+    units = units + (code < 0x10000 and 1 or 2)
+    last_byte = pos
+  end
+  return to_utf16 and units or last_byte
+end
+
+---Convert from the nearest checkpoint, scanning at most one bounded chunk.
+---@param doc core.doc
+---@param line integer
+---@param column integer
+---@param to_utf16 boolean
+---@return integer column
+local function convert_position(doc, line, column, to_utf16)
+  local index, text = get_position_index(doc, line)
+  column = common.clamp(column, 1, math.max(#text, 1))
+  if not index or not extend_position_index(index, column, to_utf16) then
+    return convert_position_text(text, column, to_utf16)
+  end
+  local offsets = to_utf16 and index.bytes or index.units
+  local point = find_position(offsets, column)
+  local first, units = index.bytes[point], index.units[point]
+  if first > #text then
+    local last_byte = #text
+    while last_byte > 1 and common.is_utf8_cont(text, last_byte) do last_byte = last_byte - 1 end
+    return last_byte
+  end
+  if offsets[point] == column then return to_utf16 and units or first end
+  local next_byte, next_units = index.bytes[point + 1], index.units[point + 1]
+  if next_units - units == next_byte - first then
+    return (to_utf16 and units or first) + column - offsets[point]
+  end
+  local last_byte = first
+  for pos, code in utf8extra.next, text:sub(first, next_byte - 1) do
+    local byte = first + pos - 1
+    if (to_utf16 and byte or units) >= column then
+      return to_utf16 and units or byte
+    end
+    units = units + (code < 0x10000 and 1 or 2)
+    last_byte = byte
+  end
+  if to_utf16 then return units end
+  return next_byte <= #text and next_byte or last_byte
+end
+
+---Retain an edited line's unchanged prefix and shift indexes for later lines.
+---Call after the raw edit, with its old first line and actual line-count delta.
+---Omitting the line clears the entire document's index on reload or close.
+---@param doc core.doc
+---@param line? integer First changed line
+---@param column? integer First changed byte column
+---@param old_text? string First line's contents before the edit
+---@param line_delta? integer Inserted/negative removed lines; required with line
+function util.invalidate_position_cache(doc, line, column, old_text, line_delta)
+  local cache = position_indexes[doc]
+  if not cache then return end
+  if not line or cache.lines ~= doc.lines then
+    position_indexes[doc] = nil
+    return
+  end
+  local entries = cache.entries
+  if line_delta ~= 0 then
+    local shifted = {}
+    for row, index in pairs(entries) do
+      if row <= line then
+        shifted[row] = index
+      elseif row > line - math.min(line_delta, 0) then
+        shifted[row + line_delta] = index
+      end
+    end
+    entries, cache.entries = shifted, shifted
+  end
+  local index, text = entries[line], doc.lines[line]
+  if index and index.text == old_text and #text >= POSITION_INDEX_MIN_LENGTH then
+    local keep = find_position(index.bytes, column)
+    for i = #index.bytes, keep + 1, -1 do
+      index.bytes[i], index.units[i] = nil, nil
+    end
+    index.text, index.invalid = text, nil
+  else
+    entries[line] = nil
+  end
+end
+
 ---Check if the given file is currently opened on the editor.
 ---@param abs_filename string
 function util.doc_is_open(abs_filename)
@@ -31,28 +212,7 @@ end
 ---@param column integer
 ---@return integer col_position
 function util.doc_utf8_to_utf16(doc, line, column)
-  local ltext = doc.lines[line]
-  local ltext_len = ltext and #ltext or 0
-  local ltext_ulen = ltext and utf8extra.len(ltext) or 0
-  column = common.clamp(column, 1, ltext_len > 0 and ltext_len or 1)
-  -- no need for conversion so return column as is
-  if ltext_len == ltext_ulen then return column end
-  if column > 1 then
-    local col = 1
-    for pos, code in utf8extra.next, ltext do
-      if pos >= column then
-        return col
-      end
-      -- Codepoints that high are encoded using surrogate pairs
-      if code < 0x010000 then
-        col = col + 1
-      else
-        col = col + 2
-      end
-    end
-    return col
-  end
-  return column
+  return convert_position(doc, line, column, true)
 end
 
 ---Converts a utf-16 column position into the equivalent utf-8 position.
@@ -61,30 +221,7 @@ end
 ---@param column integer
 ---@return integer col_position
 function util.doc_utf16_to_utf8(doc, line, column)
-  local ltext = doc.lines[line]
-  local ltext_len = ltext and #ltext or 0
-  local ltext_ulen = ltext and utf8extra.len(ltext) or 0
-  column = common.clamp(column, 1, ltext_len > 0 and ltext_len or 1)
-  -- no need for conversion so return column as is
-  if ltext_len == ltext_ulen then return column end
-  if column > 1 then
-    local col = 1
-    local utf8_pos = 1
-    for pos, code in utf8extra.next, ltext do
-      if col >= column then
-        return pos
-      end
-      utf8_pos = pos
-      -- Codepoints that high are encoded using surrogate pairs
-      if code < 0x010000 then
-        col = col + 1
-      else
-        col = col + 2
-      end
-    end
-    return utf8_pos
-  end
-  return column
+  return convert_position(doc, line, column, false)
 end
 
 ---Split a string by the given delimeter
